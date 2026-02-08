@@ -1,6 +1,6 @@
 ﻿# pyLitePT: Pure Python 3D Detection & Segmentation
 
-**A highly optimized, "Pure Python" implementation of LitePT for concurrent 3D Object Detection and Semantic Segmentation.**
+**A highly optimized, "Pure Python" implementation of LitePT for 3D Object Detection and Semantic Segmentation.**
 
 ## 🚀 Key Features
 
