@@ -1,0 +1,17 @@
+# Core Deep Learning
+torch
+torchvision
+numpy
+timm
+
+# Utilities
+addict
+tqdm
+
+# Visualization
+vispy
+PySide6
+
+# Optional / Platform Specific
+# spconv-cu1xx (GPU) or spconv-cpu (CPU) recommended for fast sparse conv
+# torch-scatter (Recommended for fastest aggregation, fallback included)
