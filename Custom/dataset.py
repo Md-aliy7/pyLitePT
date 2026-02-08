@@ -297,9 +297,8 @@ class CustomDataset(Dataset):
             # Shift labels 0->1, 1->2 etc. so that all objects are considered foreground.
             if gt_boxes.shape[1] > 7:
                  gt_boxes[:, 7] += 1
-            # Issue 7 Fix: Enforce Z-center convention (most labels are Z-bottom)
-            if gt_boxes.shape[0] > 0:
-                 gt_boxes[:, 2] += gt_boxes[:, 5] / 2
+            # if gt_boxes.shape[0] > 0:
+            #      gt_boxes[:, 2] += gt_boxes[:, 5] / 2
         
         return coord, features, segment, gt_boxes
     
@@ -367,9 +366,8 @@ class CustomDataset(Dataset):
                 # Shift labels 0->1 attached to objects.
                 if gt_boxes.shape[1] > 7:
                     gt_boxes[:, 7] += 1
-                # Issue 7 Fix: Enforce Z-center convention
-                if gt_boxes.shape[0] > 0:
-                    gt_boxes[:, 2] += gt_boxes[:, 5] / 2
+                # if gt_boxes.shape[0] > 0:
+                #     gt_boxes[:, 2] += gt_boxes[:, 5] / 2
             else:
                 gt_boxes = np.zeros((0, 8), dtype=np.float32)
             
