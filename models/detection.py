@@ -117,6 +117,14 @@ class LitePTDetectionHead(nn.Module):
             
         # Forward through detection head
         ret_dict = self.head(input_dict)
+        ret_dict['batch_index'] = batch
+        
+        # Semantic Refinement (Ground boxes in segmentation results)
+        seg_logits = point.get('seg_logits', None)
+        if seg_logits is not None and not self.training:
+            # We can refine scores here or inside post_process
+            ret_dict['seg_logits'] = seg_logits
+            ret_dict['coords'] = coord
         
         if not self.training:
             ret_dict = self.post_process(ret_dict)
@@ -144,7 +152,9 @@ class LitePTDetectionHead(nn.Module):
         box_preds = ret_dict['batch_box_preds']
         cls_scores = ret_dict['point_cls_scores']
         cls_preds = ret_dict['batch_cls_preds']  # Filter this too
-        batch_idx = ret_dict['batch_index']
+        batch_idx = ret_dict.get('batch_index')
+        seg_logits = ret_dict.get('seg_logits')
+        coords = ret_dict.get('coords')
         
         # Iterate over batch
         batch_size = int(batch_idx.max().item() + 1)
@@ -172,43 +182,29 @@ class LitePTDetectionHead(nn.Module):
             cur_scores = cur_scores[score_mask]
             cur_cls_preds = cur_cls_preds[score_mask]
             
-            # Step 2: TopK filter for efficiency
-            if cur_boxes.shape[0] > max_boxes:
-                topk_scores, topk_inds = torch.topk(cur_scores, k=max_boxes)
+            # Step 2: PRE-NMS TOPK (Optimization Fix!)
+            # Take more than final max_boxes to allow refinement to prune correctly
+            pre_nms_topk = max_boxes * 4 
+            if cur_boxes.shape[0] > pre_nms_topk:
+                cur_scores, topk_inds = torch.topk(cur_scores, k=pre_nms_topk)
                 cur_boxes = cur_boxes[topk_inds]
-                cur_scores = topk_scores
                 cur_cls_preds = cur_cls_preds[topk_inds]
             
-            # Step 3: Optional NMS
-            # Step 3: Fast BEV NMS (torchvision)
+            # Step 3: Semantic Refinement (Now on much fewer boxes)
+            if seg_logits is not None and coords is not None:
+                # Refine scores for the current batch item
+                cur_seg = seg_logits[mask]
+                cur_coords = coords[mask]
+                cur_scores = self.semantic_refinement(cur_boxes, cur_scores, cur_seg, cur_coords, cur_cls_preds)
+
+            # Step 4: Oriented BEV NMS
             if use_nms and cur_boxes.shape[0] > 1:
-                # 1. Project to BEV (x, y, dx, dy, heading) -> (x1, y1, x2, y2)
-                # Box: [x, y, z, dx, dy, dz, heading]
-                x, y = cur_boxes[:, 0], cur_boxes[:, 1]
-                dx, dy = cur_boxes[:, 3], cur_boxes[:, 4]
-                heading = cur_boxes[:, 6]
-                
-                # Rotate extents to get AABB size
-                cos_h = torch.abs(torch.cos(heading))
-                sin_h = torch.abs(torch.sin(heading))
-                
-                w_aabb = dx * cos_h + dy * sin_h
-                h_aabb = dx * sin_h + dy * cos_h
-                
-                x1 = x - w_aabb / 2
-                y1 = y - h_aabb / 2
-                x2 = x + w_aabb / 2
-                y2 = y + h_aabb / 2
-                
-                boxes_bev = torch.stack([x1, y1, x2, y2], dim=1)
-                
-                # 2. Apply NMS
-                import torchvision.ops
-                keep_idx = torchvision.ops.nms(boxes_bev, cur_scores, iou_threshold=nms_thresh)
-                selected = keep_idx
+                from pcdet_lite.iou3d_nms_utils import nms_gpu
+                keep_idx = nms_gpu(cur_boxes, cur_scores, thresh=nms_thresh)
+                selected = keep_idx[:max_boxes] # Final top boxes
             else:
-                # TopK already applied or single box
-                selected = torch.arange(cur_boxes.shape[0], device=cur_boxes.device)
+                # TopK already applied, just sort and cap
+                _, selected = torch.topk(cur_scores, k=min(len(cur_scores), max_boxes))
             
             final_boxes.append(cur_boxes[selected])
             final_scores.append(cur_scores[selected])
@@ -229,6 +225,55 @@ class LitePTDetectionHead(nn.Module):
             ret_dict['batch_index'] = torch.zeros((0,), device=batch_idx.device)
             
         return ret_dict
+
+    def semantic_refinement(self, boxes, scores, seg_logits, coords, cls_preds):
+        """
+        Refines detection scores based on semantic point occupancy.
+        FULLY VECTORIZED: No Python loops.
+        """
+        if len(boxes) == 0 or len(coords) == 0:
+            return scores
+            
+        from pcdet_lite.box_utils import points_in_boxes_cpu
+        
+        # 1. Assign each point to a box (N, 3), (M, 7) -> (N,)
+        box_idxs = points_in_boxes_cpu(coords, boxes)
+        
+        # 2. Get Predicted Seg labels (N,)
+        seg_labels = seg_logits.argmax(dim=-1)
+        
+        # 3. Get Target Class for each box (M,)
+        box_target_classes = cls_preds.argmax(dim=-1)
+        
+        # 4. Filter for points inside any box
+        valid_pts_mask = box_idxs >= 0
+        if not valid_pts_mask.any():
+            return scores * 0.5 # No points in boxes -> ghost box penalty
+            
+        in_box_idxs = box_idxs[valid_pts_mask]
+        in_box_seg_labels = seg_labels[valid_pts_mask]
+        
+        # 5. Map box target class to the points inside it
+        point_target_classes = box_target_classes[in_box_idxs]
+        
+        # 6. Calculate consistency
+        is_consistent = (in_box_seg_labels == point_target_classes)
+        
+        # 7. Aggregate counts per box using vectorized bincount
+        num_boxes = len(boxes)
+        total_counts = torch.bincount(in_box_idxs, minlength=num_boxes).float()
+        consistent_counts = torch.bincount(in_box_idxs[is_consistent], minlength=num_boxes).float()
+        
+        # 8. Calculate score multiplier
+        # occupancy: percentage of correct semantic points in the box
+        occupancy = (consistent_counts / torch.clamp(total_counts, min=1.0))
+        # density: log-scaled count of grounding points
+        density_bonus = torch.log1p(consistent_counts) / 5.0
+        
+        # Penalize boxes with NO points or NO consistent points
+        multiplier = (0.5 + 0.5 * occupancy) * (1.0 + density_bonus)
+        
+        return scores * multiplier
 
     def get_loss(self, tb_dict=None):
         """
