@@ -140,8 +140,9 @@ class PointResidualCoder:
 
         if self.use_mean_size:
             mean_size = self._get_mean_size(gt_boxes.device)
-            assert gt_classes.max() <= mean_size.shape[0]
-            point_anchor_size = mean_size[gt_classes - 1]
+            assert gt_classes.max() < mean_size.shape[0], \
+                f"Class index {gt_classes.max()} out of range for mean_size with {mean_size.shape[0]} classes"
+            point_anchor_size = mean_size[gt_classes]
             dxa, dya, dza = torch.split(point_anchor_size, 1, dim=-1)
             diagonal = torch.sqrt(dxa ** 2 + dya ** 2)
             xt = (xg - xa) / diagonal
@@ -178,8 +179,9 @@ class PointResidualCoder:
 
         if self.use_mean_size:
             mean_size = self._get_mean_size(box_encodings.device)
-            assert pred_classes.max() <= mean_size.shape[0]
-            point_anchor_size = mean_size[pred_classes - 1]
+            assert pred_classes.max() < mean_size.shape[0], \
+                f"Class index {pred_classes.max()} out of range for mean_size with {mean_size.shape[0]} classes"
+            point_anchor_size = mean_size[pred_classes]
             dxa, dya, dza = torch.split(point_anchor_size, 1, dim=-1)
             diagonal = torch.sqrt(dxa ** 2 + dya ** 2)
             xg = xt * diagonal + xa
