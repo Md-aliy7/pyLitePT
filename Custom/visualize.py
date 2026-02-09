@@ -442,53 +442,23 @@ class MainWindow(QMainWindow):
         self.text_visual = scene.visuals.Text(parent=self.canvas_pred.view.scene, color='black', font_size=300) # Large font for 3D
         
         if cfg.NUM_CLASSES_DET > 0 and self.show_boxes and 'batch_box_preds' in outputs:
-            boxes = outputs['batch_box_preds']
-            scores = outputs['point_cls_scores']
-            if scores.dim() == 2: scores = scores.squeeze(1)
-            mask = scores > self.conf_thresh
+            # Post-processed boxes from LitePTDetectionHead (Already NMS and Semantic Refined)
+            pred_boxes_t = outputs['batch_box_preds']
+            final_scores_t = outputs['point_cls_scores']
             
-            if mask.sum() > 0:
-                boxes_f = boxes[mask].float()
-                scores_f = scores[mask].float()
-                
-                # --- SEMANTIC-AWARE REFINEMENT (Centralized & Optimized) ---
-                if hasattr(self.model, 'det_head') and 'seg_logits' in outputs:
-                    # Determine target classes for these points
-                    if 'batch_cls_preds' in outputs:
-                         cur_cls_preds = outputs['batch_cls_preds'][mask]
-                    else:
-                         cur_cls_preds = torch.zeros((len(boxes_f), cfg.NUM_CLASSES_DET), device=boxes_f.device)
-                         
-                    coords_f = torch.from_numpy(pts).to(boxes_f.device)
-                    seg_logits_f = outputs['seg_logits'] # This is (N, C) for the batch
-                    
-                    # Refine scores using the model's optimized vectorized logic
-                    scores_f = self.model.det_head.semantic_refinement(
-                        boxes_f, scores_f, seg_logits_f, coords_f, cur_cls_preds
-                    )
-                
-                # Apply Oriented NMS
-                t_nms_start = time.time()
-                from pcdet_lite.iou3d_nms_utils import nms_gpu
-                
-                keep_idx = nms_gpu(boxes_f, scores_f, thresh=getattr(self, 'iou_thresh', 0.1))
-                
-                if (time.time() - t_nms_start) > 0.1:
-                    print(f"  [Perf] Oriented NMS took {(time.time() - t_nms_start):.3f}s (Boxes: {len(boxes_f)})")
-                
-                pred_boxes = boxes_f[keep_idx].cpu().numpy()
-                final_scores = scores_f[keep_idx].cpu().numpy()
+            # Filter by visualizer's confidence threshold
+            v_mask = final_scores_t > self.conf_thresh
+            if v_mask.sum() > 0:
+                pred_boxes = pred_boxes_t[v_mask].cpu().numpy()
+                final_scores = final_scores_t[v_mask].cpu().numpy()
                 
                 # Get class labels for boxes
                 if 'batch_cls_preds' in outputs:
                      cls_preds = outputs['batch_cls_preds']
-                     if cls_preds.dim() == 2:
-                         # Ensure shapes match before indexing
-                         if cls_preds.shape[0] == boxes.shape[0]:
-                             cls_preds_f = cls_preds[mask][keep_idx]
-                             pred_labels = cls_preds_f.argmax(dim=-1).cpu().numpy()
-                         else:
-                             pred_labels = np.zeros(len(pred_boxes), dtype=int)
+                     # cls_preds in outputs after post_process is (M, num_class)
+                     # corresponding to batch_box_preds
+                     if cls_preds.shape[0] == pred_boxes_t.shape[0]:
+                         pred_labels = cls_preds[v_mask].argmax(dim=-1).cpu().numpy()
                      else:
                          pred_labels = np.zeros(len(pred_boxes), dtype=int)
                 else:
@@ -505,8 +475,6 @@ class MainWindow(QMainWindow):
                 # Add Text Labels (Class + Conf)
                 text_pos = pred_boxes[:, :3] # Center
                 text_str = []
-                # Vectorized text creation if possible? VisPy Text needs list of strings.
-                # Optimization: Limit text labels if too many (e.g. > 50) to prevent lag
                 MAX_LABELS = 50
                 if len(pred_boxes) > MAX_LABELS:
                      print(f"  [Perf] Limiting text labels to {MAX_LABELS} (found {len(pred_boxes)})")
@@ -515,7 +483,6 @@ class MainWindow(QMainWindow):
                     c_name = self.class_names[pred_labels[i]] if pred_labels[i] < len(self.class_names) else f"C{pred_labels[i]}"
                     text_str.append(f"{c_name}\n{final_scores[i]:.2f}")
                 
-                # Reuse existing Text visual
                 if not hasattr(self, 'text_visual_pred'):
                      self.text_visual_pred = scene.visuals.Text(parent=self.canvas_pred.view.scene, color='black', font_size=300)
                 
