@@ -39,6 +39,7 @@ class LitePTDetectionHead(nn.Module):
         
         # Default config if not provided
         if model_cfg is None:
+            # Generic default config - mean_size should be provided by config or auto-calculated
             self.model_cfg = Dict({
                 'CLS_FC': [256, 256],
                 'REG_FC': [256, 256],
@@ -46,14 +47,7 @@ class LitePTDetectionHead(nn.Module):
                     'BOX_CODER': 'PointResidualCoder',
                     'BOX_CODER_CONFIG': {
                         'use_mean_size': True,
-                        'mean_size': [
-                            [10.0, 10.0, 10.0],  # cube
-                            [16.0, 16.0, 16.0],  # sphere
-                            [12.0, 12.0, 15.0],  # cylinder
-                            [14.0, 14.0, 15.0],  # cone
-                            [12.0, 12.0, 12.0],  # pyramid
-                            [22.0, 22.0, 6.0],   # torus
-                        ]
+                        'mean_size': [[3.9, 1.6, 1.56], [0.8, 0.6, 1.73], [1.76, 0.6, 1.73]]  # Generic defaults (will be overridden by config)
                     },
                     'GT_EXTRA_WIDTH': [0.2, 0.2, 0.2]
                 },
@@ -124,9 +118,9 @@ class LitePTDetectionHead(nn.Module):
         return ret_dict
 
     def post_process(self, ret_dict, use_nms=False, nms_thresh=0.7, 
-                      score_thresh=0.01, max_boxes=100):
+                      score_thresh=0.05, max_boxes=100):
         """
-        Apply post-processing to predictions.
+        Apply post-processing to predictions with per-class rotated BEV NMS.
         
         Args:
             ret_dict: Detection output dictionary
@@ -138,19 +132,22 @@ class LitePTDetectionHead(nn.Module):
         Returns:
             ret_dict: Updated dictionary with filtered predictions
         """
+        # Issue 1: Import rotated BEV NMS instead of AABB approximation
+        from pcdet_lite.iou3d_nms_utils import nms_gpu
+        
         if 'batch_box_preds' not in ret_dict:
             return ret_dict
         
         box_preds = ret_dict['batch_box_preds']
         cls_scores = ret_dict['point_cls_scores']
-        cls_preds = ret_dict['batch_cls_preds']  # Filter this too
+        cls_preds = ret_dict['batch_cls_preds']
         batch_idx = ret_dict['batch_index']
         
         # Iterate over batch
         batch_size = int(batch_idx.max().item() + 1)
         final_boxes = []
         final_scores = []
-        final_cls_preds = []  # Store filtered class logits
+        final_cls_preds = []
         final_batch_idx = []
         
         for k in range(batch_size):
@@ -179,44 +176,48 @@ class LitePTDetectionHead(nn.Module):
                 cur_scores = topk_scores
                 cur_cls_preds = cur_cls_preds[topk_inds]
             
-            # Step 3: Optional NMS
-            # Step 3: Fast BEV NMS (torchvision)
+            # Step 3: Per-Class Rotated BEV NMS
+            # Issue 2: Per-class NMS to prevent cross-suppression between different classes
             if use_nms and cur_boxes.shape[0] > 1:
-                # 1. Project to BEV (x, y, dx, dy, heading) -> (x1, y1, x2, y2)
-                # Box: [x, y, z, dx, dy, dz, heading]
-                x, y = cur_boxes[:, 0], cur_boxes[:, 1]
-                dx, dy = cur_boxes[:, 3], cur_boxes[:, 4]
-                heading = cur_boxes[:, 6]
+                # Get predicted class for each box
+                pred_classes = cur_cls_preds.argmax(dim=-1)
                 
-                # Rotate extents to get AABB size
-                cos_h = torch.abs(torch.cos(heading))
-                sin_h = torch.abs(torch.sin(heading))
+                # Per-class NMS: run NMS independently for each class
+                selected_indices = []
+                for class_id in range(self.num_classes):
+                    class_mask = (pred_classes == class_id)
+                    if class_mask.sum() == 0:
+                        continue
+                    
+                    # Get boxes and scores for this class
+                    class_boxes = cur_boxes[class_mask]
+                    class_scores = cur_scores[class_mask]
+                    class_indices = torch.where(class_mask)[0]
+                    
+                    # Issue 1: Using rotated BEV NMS instead of AABB approximation
+                    # This correctly handles rotated 3D boxes using polygon intersection
+                    keep_idx, _ = nms_gpu(class_boxes, class_scores, nms_thresh)
+                    
+                    # Map back to original indices
+                    selected_indices.append(class_indices[keep_idx])
                 
-                w_aabb = dx * cos_h + dy * sin_h
-                h_aabb = dx * sin_h + dy * cos_h
-                
-                x1 = x - w_aabb / 2
-                y1 = y - h_aabb / 2
-                x2 = x + w_aabb / 2
-                y2 = y + h_aabb / 2
-                
-                boxes_bev = torch.stack([x1, y1, x2, y2], dim=1)
-                
-                # 2. Apply NMS
-                import torchvision.ops
-                keep_idx = torchvision.ops.nms(boxes_bev, cur_scores, iou_threshold=nms_thresh)
-                selected = keep_idx
+                # Merge results from all classes
+                if len(selected_indices) > 0:
+                    selected = torch.cat(selected_indices)
+                else:
+                    selected = torch.tensor([], dtype=torch.long, device=cur_boxes.device)
             else:
                 # TopK already applied or single box
                 selected = torch.arange(cur_boxes.shape[0], device=cur_boxes.device)
             
-            final_boxes.append(cur_boxes[selected])
-            final_scores.append(cur_scores[selected])
-            final_cls_preds.append(cur_cls_preds[selected])
-            final_batch_idx.append(torch.full((len(selected),), k, 
-                                               device=batch_idx.device, 
-                                               dtype=batch_idx.dtype))
-            
+            if len(selected) > 0:
+                final_boxes.append(cur_boxes[selected])
+                final_scores.append(cur_scores[selected])
+                final_cls_preds.append(cur_cls_preds[selected])
+                final_batch_idx.append(torch.full((len(selected),), k, 
+                                                   device=batch_idx.device, 
+                                                   dtype=batch_idx.dtype))
+        
         if len(final_boxes) > 0:
             ret_dict['batch_box_preds'] = torch.cat(final_boxes, dim=0)
             ret_dict['point_cls_scores'] = torch.cat(final_scores, dim=0)
