@@ -387,11 +387,11 @@ def main():
     parser = argparse.ArgumentParser(description='Generate Shapes3D dataset for LitePT')
     parser.add_argument('--output', type=str, default='data',
                         help='Output directory')
-    parser.add_argument('--train', type=int, default=1000,
+    parser.add_argument('--train', type=int, default=30,
                         help='Number of training scenes')
-    parser.add_argument('--val', type=int, default=25,
+    parser.add_argument('--val', type=int, default=5,
                         help='Number of validation scenes')
-    parser.add_argument('--test', type=int, default=25,
+    parser.add_argument('--test', type=int, default=5,
                         help='Number of test scenes')
     parser.add_argument('--workers', type=int, default=0,
                         help='Number of parallel workers (0=sequential)')
