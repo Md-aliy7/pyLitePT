@@ -135,7 +135,9 @@ class PointHeadTemplate(nn.Module):
             if self.num_class == 1:
                 point_cls_labels_single[fg_flag] = 1
             else:
-                point_cls_labels_single[fg_flag] = gt_class_of_fg_points.long()
+                # Convert 0-based class indices to 1-based for detection
+                # (0 = background, 1+ = foreground classes)
+                point_cls_labels_single[fg_flag] = (gt_class_of_fg_points + 1).long()
             
             point_cls_labels[bs_mask] = point_cls_labels_single
             
@@ -256,7 +258,8 @@ class PointHeadTemplate(nn.Module):
             point_box_preds: (N, 7) decoded boxes
         """
         _, pred_classes = point_cls_preds.max(dim=-1)
-        point_box_preds = self.box_coder.decode_torch(point_box_preds, points, pred_classes + 1)
+        # Use 0-based class indices (no +1 conversion needed)
+        point_box_preds = self.box_coder.decode_torch(point_box_preds, points, pred_classes)
         return point_cls_preds, point_box_preds
 
     def forward(self, **kwargs):
