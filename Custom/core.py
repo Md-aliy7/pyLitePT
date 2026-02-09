@@ -209,10 +209,6 @@ class LitePTUnifiedCustom(nn.Module):
             # point.coord which has been averaged during encoder-decoder pooling
             original_coord = batch['coord'].to(point.feat.device)
             original_batch = batch['batch'].to(point.feat.device) if 'batch' in batch else point.batch
-            # Detection
-            # CRITICAL: Pass seg_logits for Semantic-Aware NMS refinement
-            point['seg_logits'] = outputs.get('seg_logits')
-            
             det_out = self.det_head(point, gt_boxes=gt_boxes, 
                                     original_coord=original_coord,
                                     original_batch=original_batch)

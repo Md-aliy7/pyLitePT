@@ -406,7 +406,7 @@ class MainWindow(QMainWindow):
                 batch[k] = v.to(self.device)
         
         # 2. Inference
-        self.model.eval() # consistent visuals
+        self.model.train() # use stats for better visuals
         with torch.no_grad():
             outputs = self.model(batch)
         
@@ -425,14 +425,13 @@ class MainWindow(QMainWindow):
         
         data = self.cached_result['data']
         outputs = self.cached_result['outputs']
-        pts = data['coord'].numpy()
             
         # 3. Extract Segmentation
         if 'seg_logits' in outputs:
             preds = outputs['seg_logits'].argmax(1).cpu().numpy()
         else:
             # If model treats as det-only, preds might be missing. Use dummy.
-            preds = np.zeros(len(pts), dtype=np.int64)
+            preds = np.zeros(len(data['coord']), dtype=np.int64)
             
         # 4. Extract Detection
         pred_boxes = None
@@ -442,23 +441,64 @@ class MainWindow(QMainWindow):
         self.text_visual = scene.visuals.Text(parent=self.canvas_pred.view.scene, color='black', font_size=300) # Large font for 3D
         
         if cfg.NUM_CLASSES_DET > 0 and self.show_boxes and 'batch_box_preds' in outputs:
-            # Post-processed boxes from LitePTDetectionHead (Already NMS and Semantic Refined)
-            pred_boxes_t = outputs['batch_box_preds']
-            final_scores_t = outputs['point_cls_scores']
-            
-            # Filter by visualizer's confidence threshold
-            v_mask = final_scores_t > self.conf_thresh
-            if v_mask.sum() > 0:
-                pred_boxes = pred_boxes_t[v_mask].cpu().numpy()
-                final_scores = final_scores_t[v_mask].cpu().numpy()
+            boxes = outputs['batch_box_preds']
+            scores = outputs['point_cls_scores']
+            if scores.dim() == 2: scores = scores.squeeze(1)
+            mask = scores > self.conf_thresh
+            if mask.sum() > 0:
+                boxes_f = boxes[mask]
+                scores_f = scores[mask]
+                
+                boxes_f = boxes_f.float()
+                scores_f = scores_f.float()
+                
+                # Apply NMS (Fast CPU version)
+                t_nms_start = time.time()
+                
+                # Use Fast BEV NMS via torchvision
+                # Calculate AABB (Axis Aligned Bounding Box) for 2D NMS
+                # Box: [x, y, z, dx, dy, dz, heading]
+                x, y = boxes_f[:, 0], boxes_f[:, 1]
+                dx, dy = boxes_f[:, 3], boxes_f[:, 4]
+                heading = boxes_f[:, 6]
+                
+                # Rotate extents to get AABB size
+                cos_h = torch.abs(torch.cos(heading))
+                sin_h = torch.abs(torch.sin(heading))
+                
+                # AABB width/height
+                w_aabb = dx * cos_h + dy * sin_h
+                h_aabb = dx * sin_h + dy * cos_h
+                
+                x1 = x - w_aabb / 2
+                y1 = y - h_aabb / 2
+                x2 = x + w_aabb / 2
+                y2 = y + h_aabb / 2
+                
+                boxes_bev = torch.stack([x1, y1, x2, y2], dim=1)
+                
+                # Check for compiled NMS
+                import torchvision.ops
+                keep_idx = torchvision.ops.nms(boxes_bev, scores_f, iou_threshold=getattr(self, 'iou_thresh', 0.1))
+                
+                if (time.time() - t_nms_start) > 0.1:
+                    print(f"  [Perf] Fast NMS took {(time.time() - t_nms_start):.3f}s (Boxes: {len(boxes_f)})")
+                
+                # keep_idx, _ = nms_gpu(boxes_f, scores_f, thresh=getattr(self, 'iou_thresh', 0.1))
+                
+                pred_boxes = boxes_f[keep_idx].cpu().numpy()
+                final_scores = scores_f[keep_idx].cpu().numpy()
                 
                 # Get class labels for boxes
                 if 'batch_cls_preds' in outputs:
                      cls_preds = outputs['batch_cls_preds']
-                     # cls_preds in outputs after post_process is (M, num_class)
-                     # corresponding to batch_box_preds
-                     if cls_preds.shape[0] == pred_boxes_t.shape[0]:
-                         pred_labels = cls_preds[v_mask].argmax(dim=-1).cpu().numpy()
+                     if cls_preds.dim() == 2:
+                         # Ensure shapes match before indexing
+                         if cls_preds.shape[0] == boxes.shape[0]:
+                             cls_preds_f = cls_preds[mask][keep_idx]
+                             pred_labels = cls_preds_f.argmax(dim=-1).cpu().numpy()
+                         else:
+                             pred_labels = np.zeros(len(pred_boxes), dtype=int)
                      else:
                          pred_labels = np.zeros(len(pred_boxes), dtype=int)
                 else:
@@ -475,6 +515,8 @@ class MainWindow(QMainWindow):
                 # Add Text Labels (Class + Conf)
                 text_pos = pred_boxes[:, :3] # Center
                 text_str = []
+                # Vectorized text creation if possible? VisPy Text needs list of strings.
+                # Optimization: Limit text labels if too many (e.g. > 50) to prevent lag
                 MAX_LABELS = 50
                 if len(pred_boxes) > MAX_LABELS:
                      print(f"  [Perf] Limiting text labels to {MAX_LABELS} (found {len(pred_boxes)})")
@@ -483,6 +525,7 @@ class MainWindow(QMainWindow):
                     c_name = self.class_names[pred_labels[i]] if pred_labels[i] < len(self.class_names) else f"C{pred_labels[i]}"
                     text_str.append(f"{c_name}\n{final_scores[i]:.2f}")
                 
+                # Reuse existing Text visual
                 if not hasattr(self, 'text_visual_pred'):
                      self.text_visual_pred = scene.visuals.Text(parent=self.canvas_pred.view.scene, color='black', font_size=300)
                 
@@ -495,6 +538,8 @@ class MainWindow(QMainWindow):
                       self.text_visual_pred.visible = False 
         
         gt = data['segment'].numpy() if 'segment' in data else None
+        
+        pts = data['coord'].numpy()
         
         # Set Points
         self.canvas_gt.set_data(pts, labels=gt, colors=self.colors)
