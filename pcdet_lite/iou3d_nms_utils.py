@@ -279,23 +279,28 @@ def boxes_iou3d_gpu(boxes_a, boxes_b):
 
 def nms_gpu(boxes, scores, thresh, pre_maxsize=None, **kwargs):
     """
-    Oriented Non-Maximum Suppression on CPU (API Match).
+    NMS on CPU (API Match).
     """
-    if len(boxes) == 0:
-        return torch.zeros(0, dtype=torch.long, device=boxes.device)
-
     boxes, _ = check_numpy_to_torch(boxes)
     scores, _ = check_numpy_to_torch(scores)
     
-    # Sort boxes by score
     order = scores.sort(0, descending=True)[1]
     if pre_maxsize is not None:
         order = order[:pre_maxsize]
         
     boxes = boxes[order]
+    scores = scores[order]
     
     keep = []
-    suppressed = torch.zeros(len(boxes), dtype=torch.bool, device=boxes.device)
+    
+    # Greedy NMS
+    # Since boxes_iou3d_gpu is O(N*M), and we want to select top, 
+    # we can do standard NMS loop.
+    
+    # If N is large, this is slow. 
+    # Optimize: only compute IoU with kept boxes
+    
+    suppressed = torch.zeros(len(boxes), dtype=torch.bool)
     
     for i in range(len(boxes)):
         if suppressed[i]:
@@ -303,6 +308,7 @@ def nms_gpu(boxes, scores, thresh, pre_maxsize=None, **kwargs):
             
         keep.append(i)
         
+        # Check IoU with remaining
         if i + 1 >= len(boxes):
             break
             
@@ -310,7 +316,7 @@ def nms_gpu(boxes, scores, thresh, pre_maxsize=None, **kwargs):
         candidates = boxes[i+1:]
         current_box = boxes[i:i+1] # (1, 7)
         
-        # Calc BEV IoU (Oriented)
+        # Calc BEV IoU (Issue 6 Fix: Use rotated BEV IoU for NMS)
         overlap_bev = boxes_overlap_bev_cpu(current_box, candidates)
         vol_a_bev = (current_box[:, 3] * current_box[:, 4]).view(-1, 1)
         vol_b_bev = (candidates[:, 3] * candidates[:, 4]).view(1, -1)
@@ -319,7 +325,9 @@ def nms_gpu(boxes, scores, thresh, pre_maxsize=None, **kwargs):
         
         # Suppress
         remove = iou > thresh
-        suppressed[i+1:][remove] = True
         
-    # Map back to original indices
-    return order[torch.as_tensor(keep, dtype=torch.long, device=boxes.device)]
+        # Map back indices
+        suppressed[i+1:] = suppressed[i+1:] | remove
+        
+    keep = torch.tensor(keep, dtype=torch.long)
+    return order[keep], None
