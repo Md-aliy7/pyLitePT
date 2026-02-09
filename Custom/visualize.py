@@ -406,7 +406,7 @@ class MainWindow(QMainWindow):
                 batch[k] = v.to(self.device)
         
         # 2. Inference
-        self.model.train() # use stats for better visuals
+        self.model.eval() # consistent visuals
         with torch.no_grad():
             outputs = self.model(batch)
         
@@ -425,13 +425,14 @@ class MainWindow(QMainWindow):
         
         data = self.cached_result['data']
         outputs = self.cached_result['outputs']
+        pts = data['coord'].numpy()
             
         # 3. Extract Segmentation
         if 'seg_logits' in outputs:
             preds = outputs['seg_logits'].argmax(1).cpu().numpy()
         else:
             # If model treats as det-only, preds might be missing. Use dummy.
-            preds = np.zeros(len(data['coord']), dtype=np.int64)
+            preds = np.zeros(len(pts), dtype=np.int64)
             
         # 4. Extract Detection
         pred_boxes = None
@@ -445,46 +446,35 @@ class MainWindow(QMainWindow):
             scores = outputs['point_cls_scores']
             if scores.dim() == 2: scores = scores.squeeze(1)
             mask = scores > self.conf_thresh
+            
             if mask.sum() > 0:
-                boxes_f = boxes[mask]
-                scores_f = scores[mask]
+                boxes_f = boxes[mask].float()
+                scores_f = scores[mask].float()
                 
-                boxes_f = boxes_f.float()
-                scores_f = scores_f.float()
+                # --- SEMANTIC-AWARE REFINEMENT (Centralized & Optimized) ---
+                if hasattr(self.model, 'det_head') and 'seg_logits' in outputs:
+                    # Determine target classes for these points
+                    if 'batch_cls_preds' in outputs:
+                         cur_cls_preds = outputs['batch_cls_preds'][mask]
+                    else:
+                         cur_cls_preds = torch.zeros((len(boxes_f), cfg.NUM_CLASSES_DET), device=boxes_f.device)
+                         
+                    coords_f = torch.from_numpy(pts).to(boxes_f.device)
+                    seg_logits_f = outputs['seg_logits'] # This is (N, C) for the batch
+                    
+                    # Refine scores using the model's optimized vectorized logic
+                    scores_f = self.model.det_head.semantic_refinement(
+                        boxes_f, scores_f, seg_logits_f, coords_f, cur_cls_preds
+                    )
                 
-                # Apply NMS (Fast CPU version)
+                # Apply Oriented NMS
                 t_nms_start = time.time()
+                from pcdet_lite.iou3d_nms_utils import nms_gpu
                 
-                # Use Fast BEV NMS via torchvision
-                # Calculate AABB (Axis Aligned Bounding Box) for 2D NMS
-                # Box: [x, y, z, dx, dy, dz, heading]
-                x, y = boxes_f[:, 0], boxes_f[:, 1]
-                dx, dy = boxes_f[:, 3], boxes_f[:, 4]
-                heading = boxes_f[:, 6]
-                
-                # Rotate extents to get AABB size
-                cos_h = torch.abs(torch.cos(heading))
-                sin_h = torch.abs(torch.sin(heading))
-                
-                # AABB width/height
-                w_aabb = dx * cos_h + dy * sin_h
-                h_aabb = dx * sin_h + dy * cos_h
-                
-                x1 = x - w_aabb / 2
-                y1 = y - h_aabb / 2
-                x2 = x + w_aabb / 2
-                y2 = y + h_aabb / 2
-                
-                boxes_bev = torch.stack([x1, y1, x2, y2], dim=1)
-                
-                # Check for compiled NMS
-                import torchvision.ops
-                keep_idx = torchvision.ops.nms(boxes_bev, scores_f, iou_threshold=getattr(self, 'iou_thresh', 0.1))
+                keep_idx = nms_gpu(boxes_f, scores_f, thresh=getattr(self, 'iou_thresh', 0.1))
                 
                 if (time.time() - t_nms_start) > 0.1:
-                    print(f"  [Perf] Fast NMS took {(time.time() - t_nms_start):.3f}s (Boxes: {len(boxes_f)})")
-                
-                # keep_idx, _ = nms_gpu(boxes_f, scores_f, thresh=getattr(self, 'iou_thresh', 0.1))
+                    print(f"  [Perf] Oriented NMS took {(time.time() - t_nms_start):.3f}s (Boxes: {len(boxes_f)})")
                 
                 pred_boxes = boxes_f[keep_idx].cpu().numpy()
                 final_scores = scores_f[keep_idx].cpu().numpy()
@@ -538,8 +528,6 @@ class MainWindow(QMainWindow):
                       self.text_visual_pred.visible = False 
         
         gt = data['segment'].numpy() if 'segment' in data else None
-        
-        pts = data['coord'].numpy()
         
         # Set Points
         self.canvas_gt.set_data(pts, labels=gt, colors=self.colors)
