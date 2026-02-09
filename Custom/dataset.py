@@ -293,12 +293,7 @@ class CustomDataset(Dataset):
         gt_boxes_path = ply_path.replace('.ply', '_gt_boxes.npy')
         if os.path.exists(gt_boxes_path):
             gt_boxes = np.load(gt_boxes_path).astype(np.float32)
-            # CRITICAL: Detection heads treat Class 0 as Background.
-            # Shift labels 0->1, 1->2 etc. so that all objects are considered foreground.
-            if gt_boxes.shape[1] > 7:
-                 gt_boxes[:, 7] += 1
-            # if gt_boxes.shape[0] > 0:
-            #      gt_boxes[:, 2] += gt_boxes[:, 5] / 2
+            # Labels are already 0-based from annotation tools - no conversion needed
         
         return coord, features, segment, gt_boxes
     
@@ -362,12 +357,7 @@ class CustomDataset(Dataset):
             gt_boxes_path = os.path.join(scene_path, 'gt_boxes.npy')
             if os.path.exists(gt_boxes_path):
                 gt_boxes = np.load(gt_boxes_path).astype(np.float32)
-                # CRITICAL: Detection heads treat Class 0 as Background.
-                # Shift labels 0->1 attached to objects.
-                if gt_boxes.shape[1] > 7:
-                    gt_boxes[:, 7] += 1
-                # if gt_boxes.shape[0] > 0:
-                #     gt_boxes[:, 2] += gt_boxes[:, 5] / 2
+                # Labels are already 0-based from annotation tools - no conversion needed
             else:
                 gt_boxes = np.zeros((0, 8), dtype=np.float32)
             
@@ -517,7 +507,6 @@ class CustomDataset(Dataset):
                         
         mean_sizes = []
         for i in range(num_classes):
-            # If we shifted labels 0->1, then Model Class Index 0 corresponds to Label 1.
             target_label = i + 1
             
             if target_label in sums and counts[target_label] > 0:

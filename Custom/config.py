@@ -35,24 +35,44 @@ RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__fi
 # =============================================================================
 
 # Class names (Auto-loaded from classes.json if available)
-CLASS_NAMES = ['cube', 'sphere', 'cylinder', 'cone', 'pyramid', 'torus', 'wall']
+# Default to empty list - will be populated from dataset
+CLASS_NAMES = ['class_0', 'class_1', 'class_2', 'class_3', 'class_6']
 _classes_json = os.path.join(DATA_PATH, 'classes.json')
 if os.path.exists(_classes_json):
     import json
     with open(_classes_json, 'r') as f:
         CLASS_NAMES = json.load(f)
+elif os.path.exists(DATA_PATH):
+    # Try to auto-detect from data directory
+    import json
+    # Check for any scene with classes.json
+    for root, dirs, files in os.walk(DATA_PATH):
+        if 'classes.json' in files:
+            with open(os.path.join(root, 'classes.json'), 'r') as f:
+                CLASS_NAMES = json.load(f)
+            break
 
 # Number of segmentation classes (Auto-derived)
-NUM_CLASSES_SEG = len(CLASS_NAMES)
+NUM_CLASSES_SEG = 5
+
+# Validation: Ensure classes are defined
+if NUM_CLASSES_SEG == 0 and not os.path.exists(os.path.join(DATA_PATH, 'classes.json')):
+    import warnings
+    warnings.warn(
+        f"No classes.json found in {DATA_PATH}. "
+        "CLASS_NAMES will be auto-detected from dataset during training. "
+        "For better control, create a classes.json file with your class names."
+    )
 
 # Label Mapping (Optional): Map raw dataset labels to training IDs
 # Example: {-1: 0} maps label -1 to class 0
-# For Shapes3D (labelCloud export), -1 is often Ground (Class 1)
-LABEL_MAPPING = {-1: 1}
+# Leave empty if your labels are already correct
+LABEL_MAPPING = {}
 
-# Number of detection classes (Shapes only)
-# Auto-logic: If 'wall' is in classes, exclude it (N-1), else use all classes
-NUM_CLASSES_DET = NUM_CLASSES_SEG - 1 if 'wall' in CLASS_NAMES else NUM_CLASSES_SEG
+# Number of detection classes
+# Use all segmentation classes for detection by default
+# The auto-optimizer will set this based on actual detection boxes in the dataset
+NUM_CLASSES_DET = 4
 
 # =============================================================================
 # TRAINING HYPERPARAMETERS (adjust as needed)
@@ -75,7 +95,7 @@ GRAD_CLIP_NORM = 1.0
 
 # Class weights (Auto-calculated if 'auto')
 # Cart (few points) -> High weight, Ground (many points) -> Low weight
-CLASS_WEIGHTS = 'auto'
+CLASS_WEIGHTS = [4.0, 2.0, 1.0, 1.33, 1.33]
 
 # Training steps per epoch (set to None for full epoch)
 TRAIN_STEPS_PER_EPOCH = None
@@ -89,10 +109,10 @@ MODEL_VARIANT = 'nano'
 
 # Input feature channels (Auto-detected if 'auto')
 # Set to 'auto' to let dataset detect (e.g. 6 for coord+color)
-INPUT_CHANNELS = 'auto'
+INPUT_CHANNELS = 6
 
 # Grid size for voxelization (Auto-detected)
-GRID_SIZE = 0.7416
+GRID_SIZE = 0.7245
 
 
 # =============================================================================
@@ -109,7 +129,7 @@ DETECTION_CONFIG = {
     'MEAN_SIZE': 'auto',
     
     # Extra width for target assignment (ignore region around GT)
-    'GT_EXTRA_WIDTH': [0.1],    # Reduced for small objects
+    'GT_EXTRA_WIDTH': [0.2, 0.2, 0.2],    # [x, y, z] margins for target assignment
 
     # Loss Configuration (Weighted to balance Seg vs Det)
     'LOSS_CONFIG': {
@@ -125,10 +145,13 @@ DETECTION_CONFIG = {
 # Loss Weighting
 # Balance factor for detection loss relative to segmentation loss
 # loss = seg_loss + (det_loss * DETECTION_LOSS_WEIGHT)
-DETECTION_LOSS_WEIGHT = 1.0
+# Issue 3: Increased to 2.0x to balance detection vs segmentation
+# Segmentation operates on ~100k points while detection on ~100-1000 positive points
+DETECTION_LOSS_WEIGHT = 2.0
 
 # Automatic Multi-Task Balancing
 # Options: 'none' (static weights), 'uncertainty' (Kendall 2018), 'gradnorm' (Chen 2018)
+# Issue 5: Using static balancing for stability and predictability
 LOSS_BALANCING_METHOD = 'uncertainty'
 
 # GradNorm Settings (Only used if LOSS_BALANCING_METHOD == 'gradnorm')

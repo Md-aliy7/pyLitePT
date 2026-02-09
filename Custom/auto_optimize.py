@@ -98,7 +98,7 @@ def analyze_dataset(data_path):
             if fmt == 'npy':
                 pts = np.load(os.path.join(path, 'coord.npy'))
                 seg_path = os.path.join(path, 'segment.npy')
-                labels = np.load(seg_path) if os.path.exists(seg_path) else None
+                seg_labels = np.load(seg_path) if os.path.exists(seg_path) else None
                 
                 color_path = os.path.join(path, 'color.npy')
                 if os.path.exists(color_path):
@@ -110,22 +110,25 @@ def analyze_dataset(data_path):
                     stats['has_detection'] = True
                     if len(gt_boxes) > 0 and gt_boxes.shape[1] > 7:
                         dims = gt_boxes[:, 3:6]
-                        labels = gt_boxes[:, 7].astype(int)
+                        det_labels = gt_boxes[:, 7].astype(int)
                         
-                        for i, lbl in enumerate(labels):
+                        for i, lbl in enumerate(det_labels):
                             stats['det_class_counts'][lbl] = stats['det_class_counts'].get(lbl, 0) + 1
                             if lbl not in stats.get('det_box_sums', {}):
                                 stats.setdefault('det_box_sums', {})[lbl] = np.zeros(3)
                             stats['det_box_sums'][lbl] += dims[i]
+                
+                # Use seg_labels for segmentation class counting
+                labels = seg_labels
             else:
                 data = read_ply_simple(path)
                 pts = np.column_stack([data['x'], data['y'], data['z']])
                 
-                labels = None
+                seg_labels = None
                 if 'class' in data.dtype.names:
-                    labels = data['class']
+                    seg_labels = data['class']
                 elif 'label' in data.dtype.names:
-                    labels = data['label']
+                    seg_labels = data['label']
                 
                 if 'red' in data.dtype.names:
                     stats['has_color'] = True
@@ -137,13 +140,16 @@ def analyze_dataset(data_path):
                     stats['has_detection'] = True
                     if len(gt_boxes) > 0 and gt_boxes.shape[1] > 7:
                         dims = gt_boxes[:, 3:6]
-                        labels = gt_boxes[:, 7].astype(int)
+                        det_labels = gt_boxes[:, 7].astype(int)
                         
-                        for i, lbl in enumerate(labels):
+                        for i, lbl in enumerate(det_labels):
                             stats['det_class_counts'][lbl] = stats['det_class_counts'].get(lbl, 0) + 1
                             if lbl not in stats.get('det_box_sums', {}):
                                 stats.setdefault('det_box_sums', {})[lbl] = np.zeros(3)
                             stats['det_box_sums'][lbl] += dims[i]
+                
+                # Use seg_labels for segmentation class counting
+                labels = seg_labels
             
             # Update stats
             stats['num_files'] += 1
@@ -191,59 +197,63 @@ def calculate_optimal_params(stats, data_path=None):
         with open(classes_json_path, 'r') as f:
             gt_classes = json.load(f)
     
-    # Segmentation classes
+    # Segmentation classes - from segment.npy files
     if gt_classes:
         params['NUM_CLASSES_SEG'] = len(gt_classes)
         params['CLASS_NAMES'] = gt_classes
     else:
-        num_seg_classes = len(stats['seg_class_counts'])
-        params['NUM_CLASSES_SEG'] = num_seg_classes
-        params['CLASS_NAMES'] = [f'class_{i}' for i in sorted(stats['seg_class_counts'].keys())]
+        # Auto-detect from segmentation labels
+        if stats['seg_class_counts']:
+            num_seg_classes = len(stats['seg_class_counts'])
+            params['NUM_CLASSES_SEG'] = num_seg_classes
+            params['CLASS_NAMES'] = [f'class_{i}' for i in sorted(stats['seg_class_counts'].keys())]
+        else:
+            # Fallback: use detection classes if no segmentation labels found
+            num_seg_classes = len(stats['det_class_counts'])
+            params['NUM_CLASSES_SEG'] = num_seg_classes
+            params['CLASS_NAMES'] = [f'class_{i}' for i in sorted(stats['det_class_counts'].keys())]
     
-    # Class weights
-    if params['NUM_CLASSES_SEG'] > 0:
+    # Class weights for segmentation
+    if params['NUM_CLASSES_SEG'] > 0 and stats['seg_class_counts']:
         total = sum(stats['seg_class_counts'].values())
+        
+        # Get actual class IDs (might not be contiguous)
+        class_ids = sorted(stats['seg_class_counts'].keys())
         counts = []
-        for i in range(params['NUM_CLASSES_SEG']):
-            # Use stats count or 0 (to avoid div by zero)
-            c = stats['seg_class_counts'].get(i, 0)
+        for cls_id in class_ids:
+            c = stats['seg_class_counts'].get(cls_id, 0)
             counts.append(c)
         counts = np.array(counts, dtype=np.float32)
         
         # Avoid zero division
         weights = total / (params['NUM_CLASSES_SEG'] * np.maximum(counts, 1))
-        # Normalize min to 1.0 (approx) or keep raw. Let's normalize around mean=1 or min=1
         if weights.min() > 0:
              weights = weights / weights.min()
         params['CLASS_WEIGHTS'] = [round(float(w), 2) for w in weights]
     else:
         params['CLASS_WEIGHTS'] = 'auto'
     
-    # Detection classes
-    # If we have gt_classes, check if 'wall' is in there. Usually last class.
-    # We want NUM_CLASSES_DET to exclude 'wall' if it's strictly background.
-    # But user wants 100% correctness.
-    # Shapes3D: 6 shapes + wall. Detection usually only for shapes.
-    # We will assume "wall" is background for detection IF it exists at the end.
-    
-    is_shapes3d = gt_classes and 'wall' in gt_classes
-    if is_shapes3d:
-         # 6 shapes
-         params['NUM_CLASSES_DET'] = len(gt_classes) - 1
+    # Detection classes - use all classes that have detection boxes
+    # Don't make assumptions about which classes are background
+    if stats['det_class_counts']:
+        params['NUM_CLASSES_DET'] = len(stats['det_class_counts'])
     else:
-         params['NUM_CLASSES_DET'] = len(stats['det_class_counts'])
+        params['NUM_CLASSES_DET'] = 0
     
-    # Mean Sizes
+    # Mean Sizes - based on actual detection boxes found
     mean_sizes = []
-    if params['NUM_CLASSES_DET'] > 0:
-        for i in range(params['NUM_CLASSES_DET']):
-            # Assuming classes are 0..N-1
-            if i in stats.get('det_box_sums', {}):
-                 s = stats['det_box_sums'][i]
-                 c = stats['det_class_counts'][i]
-                 mean_sizes.append((s / c).tolist())
+    if params['NUM_CLASSES_DET'] > 0 and stats.get('det_box_sums'):
+        # Get all detection class IDs that have boxes
+        det_class_ids = sorted(stats['det_class_counts'].keys())
+        
+        for cls_id in det_class_ids:
+            if cls_id in stats['det_box_sums'] and stats['det_class_counts'][cls_id] > 0:
+                s = stats['det_box_sums'][cls_id]
+                c = stats['det_class_counts'][cls_id]
+                mean_sizes.append((s / c).tolist())
             else:
-                 mean_sizes.append([1.0, 1.0, 1.0]) # Default
+                mean_sizes.append([1.0, 1.0, 1.0])
+    
     params['MEAN_SIZE'] = mean_sizes
     
     # Grid size

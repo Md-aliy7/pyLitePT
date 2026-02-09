@@ -7,7 +7,19 @@ Robustly handles Unified, Segmentation-only, and Detection-only modes.
 Dynamically loads settings from 'Custom/config.py'.
 
 Usage:
-    python Custom/visualize.py --checkpoint results/best_unified_model.pth --data_format ply
+    # Auto-detect split (tries val, train, test)
+    python Custom/visualize.py
+    
+    # Specify checkpoint and split
+    python Custom/visualize.py --checkpoint last_unified_model.pth --split train
+    
+    # Use PLY format
+    python Custom/visualize.py --split train --data_format ply
+    
+Arguments:
+    --checkpoint: Path to model checkpoint (default: best_unified_model.pth)
+    --split: Data split (train/val/test/auto, default: auto)
+    --data_format: Data format (ply/npy/auto, default: auto)
 """
 
 import os
@@ -285,6 +297,19 @@ class MainWindow(QMainWindow):
             iou_layout.addWidget(self.iou_val_label)
             det_layout.addLayout(iou_layout)
             
+            # Font Size Slider
+            font_layout = QHBoxLayout()
+            font_layout.addWidget(QLabel("Font:"))
+            self.font_slider = QSlider(Qt.Horizontal)
+            self.font_slider.setRange(10, 200)  # 10% to 200% of adaptive size
+            self.font_slider.setValue(100)  # 100% = use adaptive size
+            self.font_scale = 1.0
+            self.font_slider.valueChanged.connect(self.update_font_scale)
+            font_layout.addWidget(self.font_slider)
+            self.font_val_label = QLabel("100%")
+            font_layout.addWidget(self.font_val_label)
+            det_layout.addLayout(font_layout)
+            
             ctrl_layout.addWidget(det_box)
         
         # 4. Legend (Connects to Class Names)
@@ -388,6 +413,12 @@ class MainWindow(QMainWindow):
         self.iou_thresh = val
         self.iou_val_label.setText(f"{val:.2f}")
         self.update_visuals()
+    
+    def update_font_scale(self):
+        val = self.font_slider.value() / 100.0
+        self.font_scale = val
+        self.font_val_label.setText(f"{int(val*100)}%")
+        self.update_visuals()
         
     def load_scene(self, idx):
         """Loads data and runs inference ONCE. Caches results."""
@@ -419,6 +450,28 @@ class MainWindow(QMainWindow):
         # 4. Trigger Visualization update
         self.update_visuals()
             
+    def calculate_adaptive_font_size(self, points):
+        """Calculate adaptive font size based on point cloud extent."""
+        if len(points) == 0:
+            return 300  # Default
+        
+        # Calculate scene extent
+        min_bounds = points.min(axis=0)
+        max_bounds = points.max(axis=0)
+        extent = max_bounds - min_bounds
+        max_extent = extent.max()
+        
+        # Font size proportional to scene size
+        # For a scene of ~100 units, use font_size ~300
+        # Scale linearly
+        base_font_size = max(50, min(1000, int(max_extent * 3)))
+        
+        # Apply user scale factor
+        font_scale = getattr(self, 'font_scale', 1.0)
+        font_size = int(base_font_size * font_scale)
+        
+        return font_size
+    
     def update_visuals(self):
         """Re-draws the scene using cached results and current thresholds."""
         if not hasattr(self, 'cached_result'): return
@@ -438,7 +491,12 @@ class MainWindow(QMainWindow):
         # Clear previous text
         if hasattr(self, 'text_visual'):
             self.text_visual.parent = None
-        self.text_visual = scene.visuals.Text(parent=self.canvas_pred.view.scene, color='black', font_size=300) # Large font for 3D
+        
+        # Calculate adaptive font size based on scene
+        pts = data['coord'].numpy()
+        adaptive_font_size = self.calculate_adaptive_font_size(pts)
+        
+        self.text_visual = scene.visuals.Text(parent=self.canvas_pred.view.scene, color='black', font_size=adaptive_font_size)
         
         if cfg.NUM_CLASSES_DET > 0 and self.show_boxes and 'batch_box_preds' in outputs:
             boxes = outputs['batch_box_preds']
@@ -527,7 +585,10 @@ class MainWindow(QMainWindow):
                 
                 # Reuse existing Text visual
                 if not hasattr(self, 'text_visual_pred'):
-                     self.text_visual_pred = scene.visuals.Text(parent=self.canvas_pred.view.scene, color='black', font_size=300)
+                     self.text_visual_pred = scene.visuals.Text(parent=self.canvas_pred.view.scene, color='black', font_size=adaptive_font_size)
+                else:
+                     # Update font size for existing visual
+                     self.text_visual_pred.font_size = adaptive_font_size
                 
                 self.text_visual_pred.text = text_str
                 self.text_visual_pred.pos = text_pos[:len(text_str)]
@@ -555,9 +616,8 @@ class MainWindow(QMainWindow):
                 # Color GT boxes by their class (index 7)
                 if gt_boxes.shape[1] > 7:
                     gt_labels = gt_boxes[:, 7].astype(int)
-                    # Data labels are 1-based (1..N). Colors are 0-based (0..N-1).
-                    # Shift back -1 for visualization
-                    color_indices = np.clip(gt_labels - 1, 0, len(self.colors)-1)
+                    # Labels are 0-based (0..N-1) - use directly for color indexing
+                    color_indices = np.clip(gt_labels, 0, len(self.colors)-1)
                     gt_colors = self.colors[color_indices]
                     self.canvas_gt.set_boxes(gt_boxes, colors=gt_colors)
                 else:
@@ -599,10 +659,13 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--checkpoint', type=str, default=None)
-    parser.add_argument('--split', type=str, default='val')
-    parser.add_argument('--data_format', type=str, default='auto', choices=['auto', 'ply', 'npy'])
+    parser = argparse.ArgumentParser(description='LitePT Visualization Tool')
+    parser.add_argument('--checkpoint', type=str, default=None, 
+                        help='Path to model checkpoint (default: best_unified_model.pth in RESULTS_DIR)')
+    parser.add_argument('--split', type=str, default='auto', 
+                        help='Data split to visualize: train, val, test, or auto (default: auto - tries val, then train, then test)')
+    parser.add_argument('--data_format', type=str, default='auto', choices=['auto', 'ply', 'npy'],
+                        help='Data format: ply, npy, or auto (default: auto)')
     args = parser.parse_args()
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -616,9 +679,52 @@ def main():
     if ensure_optimization(cfg.DATA_PATH):
         importlib.reload(cfg)
     
+    # Auto-detect split if needed
+    split = args.split
+    if split == 'auto':
+        # Try val, train, test in order
+        for candidate in ['val', 'train', 'test']:
+            candidate_path = os.path.join(cfg.DATA_PATH, candidate)
+            if os.path.exists(candidate_path) and os.path.isdir(candidate_path):
+                # Check if it has any scenes
+                has_scenes = False
+                for item in os.listdir(candidate_path):
+                    item_path = os.path.join(candidate_path, item)
+                    if os.path.isdir(item_path) and os.path.exists(os.path.join(item_path, 'coord.npy')):
+                        has_scenes = True
+                        break
+                    elif item.endswith('.ply'):
+                        has_scenes = True
+                        break
+                
+                if has_scenes:
+                    split = candidate
+                    print(f"Auto-detected split: {split}")
+                    break
+        
+        if split == 'auto':
+            print(f"Warning: No valid split found in {cfg.DATA_PATH}")
+            print(f"Looking for folders: train/, val/, or test/ with data files")
+            split = 'train'  # Fallback
+    
     fmt_arg = args.data_format if args.data_format != 'auto' else 'npy'
-    dataset = CustomDataset(cfg.DATA_PATH, split=args.split, cfg=cfg, data_format=fmt_arg)
-    print(f"Loaded {len(dataset)} scenes from {cfg.DATA_PATH}")
+    dataset = CustomDataset(cfg.DATA_PATH, split=split, cfg=cfg, data_format=fmt_arg)
+    print(f"Loaded {len(dataset)} scenes from {cfg.DATA_PATH} (split: {split})")
+    
+    if len(dataset) == 0:
+        print(f"\n❌ ERROR: No scenes found!")
+        print(f"   Data path: {cfg.DATA_PATH}")
+        print(f"   Split: {split}")
+        print(f"   Format: {fmt_arg}")
+        print(f"\n   Available splits:")
+        for candidate in ['train', 'val', 'test']:
+            candidate_path = os.path.join(cfg.DATA_PATH, candidate)
+            if os.path.exists(candidate_path):
+                print(f"     - {candidate}/ (exists)")
+            else:
+                print(f"     - {candidate}/ (not found)")
+        print(f"\n   Try: python Custom/visualize.py --split train")
+        sys.exit(1)
     
     # Model
     input_channels = dataset.input_channels
@@ -643,6 +749,18 @@ def main():
     ckpt_path = args.checkpoint
     if ckpt_path is None:
         ckpt_path = os.path.join(cfg.RESULTS_DIR, 'best_unified_model.pth')
+    else:
+        # Resolve checkpoint path: try as-is, then relative to RESULTS_DIR, then relative to project root
+        if not os.path.exists(ckpt_path):
+            # Try relative to RESULTS_DIR
+            alt_path = os.path.join(cfg.RESULTS_DIR, os.path.basename(ckpt_path))
+            if os.path.exists(alt_path):
+                ckpt_path = alt_path
+            else:
+                # Try relative to project root
+                alt_path = os.path.join(parent, ckpt_path)
+                if os.path.exists(alt_path):
+                    ckpt_path = alt_path
         
     if os.path.exists(ckpt_path):
         print(f"Loading {ckpt_path}")

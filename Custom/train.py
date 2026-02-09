@@ -198,15 +198,13 @@ def train_one_epoch(model, loader, optimizer, scheduler, seg_criterion, device, 
                             valid_mask = gt_boxes[:, 3:6].sum(axis=1) > 0
                             gt_boxes = gt_boxes[valid_mask]
                             gt_labels = gt_boxes[:, 7].astype(np.int32) if gt_boxes.shape[1] > 7 else np.zeros(len(gt_boxes), dtype=np.int32)
-                            # PERFORMANCE OPTIMIZATION (R40): Filter noisy boxes before geometry evaluation
-                            # Without this, we calculate 100k+ rotated IoUs per batch
-                            score_mask = pred_scores > 0.1
+                            # Issue 6: Increased threshold to 0.3 for higher quality metrics
+                            # Filter noisy boxes before geometry evaluation
+                            score_mask = pred_scores > 0.3
                             pred_boxes = pred_boxes[score_mask]
                             pred_scores = pred_scores[score_mask]
                             
-                            # Fix Class Mismatch (1-based -> 0-based)
-                            if gt_labels.min() >= 1:
-                                gt_labels = gt_labels - 1
+                            # Labels are already 0-based from dataset - no conversion needed
 
                             if len(pred_boxes) > 0 or len(gt_boxes) > 0:
                                 if len(pred_boxes) > 500: # Final safety ceiling for training metrics
@@ -553,8 +551,9 @@ def validate_one_epoch(model, loader, seg_criterion, device, num_det_classes=0, 
                         pred_boxes = det_out['batch_box_preds'].float().cpu().numpy()
                         pred_scores = det_out.get('point_cls_scores', torch.zeros(len(pred_boxes))).float().cpu().numpy()
                         
-                        # PERFORMANCE OPTIMIZATION (R40): Filter noisy boxes before greedy evaluation
-                        score_mask = pred_scores > 0.05
+                        # Issue 6: Increased threshold to 0.3 for higher quality metrics
+                        # Filter noisy boxes before greedy evaluation
+                        score_mask = pred_scores > 0.3
                         pred_boxes = pred_boxes[score_mask]
                         pred_scores = pred_scores[score_mask]
                         
@@ -579,9 +578,7 @@ def validate_one_epoch(model, loader, seg_criterion, device, num_det_classes=0, 
                         gt_boxes = gt_boxes[valid_mask]
                         gt_labels = gt_boxes[:, 7].astype(np.int32) if gt_boxes.shape[1] > 7 else np.zeros(len(gt_boxes), dtype=np.int32)
                         
-                        # Fix Class Mismatch (1-based -> 0-based)
-                        if gt_labels.min() >= 1:
-                            gt_labels = gt_labels - 1
+                        # Labels are already 0-based from dataset - no conversion needed
 
                         if len(pred_boxes) > 0 or len(gt_boxes) > 0:
                             det_metrics.add_batch(
@@ -751,7 +748,33 @@ def main(args):
     log_model_info(model)
     
     # 3. Training Setup
-    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=cfg.WEIGHT_DECAY)
+    # Issue 4: Detection head uses 2x learning rate for faster convergence
+    # Create separate parameter groups for backbone and detection head
+    param_groups = []
+    
+    # Backbone and segmentation head parameters (base LR)
+    backbone_params = []
+    for name, param in model.named_parameters():
+        if 'det_head' not in name:
+            backbone_params.append(param)
+    
+    param_groups.append({
+        'params': backbone_params,
+        'lr': lr,
+        'weight_decay': cfg.WEIGHT_DECAY
+    })
+    
+    # Detection head parameters (2x LR)
+    if model.det_head is not None:
+        det_params = list(model.det_head.parameters())
+        param_groups.append({
+            'params': det_params,
+            'lr': lr * 2.0,
+            'weight_decay': cfg.WEIGHT_DECAY
+        })
+        print(f"[Optimizer] Detection head LR: {lr * 2.0:.6f} (2x backbone)")
+    
+    optimizer = optim.AdamW(param_groups)
     scheduler = optim.lr_scheduler.OneCycleLR(
         optimizer, max_lr=lr, steps_per_epoch=len(train_loader), epochs=epochs
     )
