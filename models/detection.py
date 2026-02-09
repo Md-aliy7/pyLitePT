@@ -77,7 +77,8 @@ class LitePTDetectionHead(nn.Module):
             predict_boxes_when_training=True
         )
 
-    def forward(self, point, gt_boxes=None, original_coord=None, original_batch=None):
+    def forward(self, point, gt_boxes=None, original_coord=None, original_batch=None, 
+                use_nms=True, nms_thresh=0.7, score_thresh=0.01):
         """
         Forward pass through detection head.
         
@@ -90,6 +91,9 @@ class LitePTDetectionHead(nn.Module):
                 [x, y, z, dx, dy, dz, heading, label]
             original_coord: Optional (N, 3) original point coordinates before pooling
             original_batch: Optional (N,) original batch indices
+            use_nms: bool, whether to apply NMS (default True)
+            nms_thresh: float, IoU threshold for NMS (default 0.7)
+            score_thresh: float, minimum score threshold (default 0.01)
             
         Returns:
             dict: Detection results including:
@@ -127,11 +131,11 @@ class LitePTDetectionHead(nn.Module):
             ret_dict['coords'] = coord
         
         if not self.training:
-            ret_dict = self.post_process(ret_dict)
+            ret_dict = self.post_process(ret_dict, use_nms=use_nms, nms_thresh=nms_thresh, score_thresh=score_thresh)
         
         return ret_dict
 
-    def post_process(self, ret_dict, use_nms=False, nms_thresh=0.7, 
+    def post_process(self, ret_dict, use_nms=True, nms_thresh=0.7, 
                       score_thresh=0.01, max_boxes=100):
         """
         Apply post-processing to predictions.
@@ -197,10 +201,11 @@ class LitePTDetectionHead(nn.Module):
                 cur_coords = coords[mask]
                 cur_scores = self.semantic_refinement(cur_boxes, cur_scores, cur_seg, cur_coords, cur_cls_preds)
 
-            # Step 4: Oriented BEV NMS
+            # Step 4: Oriented BEV NMS (Class-Aware)
             if use_nms and cur_boxes.shape[0] > 1:
                 from pcdet_lite.iou3d_nms_utils import nms_gpu
-                keep_idx = nms_gpu(cur_boxes, cur_scores, thresh=nms_thresh)
+                cur_labels = cur_cls_preds.argmax(dim=-1)
+                keep_idx = nms_gpu(cur_boxes, cur_scores, thresh=nms_thresh, labels=cur_labels)
                 selected = keep_idx[:max_boxes] # Final top boxes
             else:
                 # TopK already applied, just sort and cap
