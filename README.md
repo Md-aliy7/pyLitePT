@@ -69,7 +69,6 @@ python Custom/visualize.py --checkpoint exp/custom_training/best_unified_model.p
 
 - **[Custom/README.md](Custom/README.md)**: Quick start guide
 - **[Custom/TRAINING_WORKFLOW.md](Custom/TRAINING_WORKFLOW.md)**: Detailed training workflow
-- **[MODEL_VARIANTS_GUIDE.md](MODEL_VARIANTS_GUIDE.md)**: Complete guide to all model variants and architectures
 
 ## 📄 License
 This project is licensed under the MIT License - see the `LICENSE` file for details.
