@@ -36,7 +36,7 @@ RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__fi
 
 # Class names (Auto-loaded from classes.json if available)
 # Default to empty list - will be populated from dataset
-CLASS_NAMES = ['class_0', 'class_1', 'class_2', 'class_3', 'class_6']
+CLASS_NAMES = ['ground', 'cart']
 _classes_json = os.path.join(DATA_PATH, 'classes.json')
 if os.path.exists(_classes_json):
     import json
@@ -53,7 +53,7 @@ elif os.path.exists(DATA_PATH):
             break
 
 # Number of segmentation classes (Auto-derived)
-NUM_CLASSES_SEG = 5
+NUM_CLASSES_SEG = 2
 
 # Validation: Ensure classes are defined
 if NUM_CLASSES_SEG == 0 and not os.path.exists(os.path.join(DATA_PATH, 'classes.json')):
@@ -72,7 +72,7 @@ LABEL_MAPPING = {}
 # Number of detection classes
 # Use all segmentation classes for detection by default
 # The auto-optimizer will set this based on actual detection boxes in the dataset
-NUM_CLASSES_DET = 4
+NUM_CLASSES_DET = 1
 
 # =============================================================================
 # TRAINING HYPERPARAMETERS (adjust as needed)
@@ -82,7 +82,7 @@ NUM_CLASSES_DET = 4
 EPOCHS = 900
 
 # Batch size (reduce if running out of memory)
-BATCH_SIZE = 4
+BATCH_SIZE = 2
 
 # Learning rate
 LEARNING_RATE = 0.001
@@ -95,7 +95,7 @@ GRAD_CLIP_NORM = 1.0
 
 # Class weights (Auto-calculated if 'auto')
 # Cart (few points) -> High weight, Ground (many points) -> Low weight
-CLASS_WEIGHTS = [4.0, 2.0, 1.0, 1.33, 1.33]
+CLASS_WEIGHTS = [16.6, 1.0]
 
 # Training steps per epoch (set to None for full epoch)
 TRAIN_STEPS_PER_EPOCH = None
@@ -104,15 +104,73 @@ TRAIN_STEPS_PER_EPOCH = None
 # MODEL ARCHITECTURE (usually don't need to change)
 # =============================================================================
 
-# Model variant: 'nano' (~1M), 'micro' (~2M), 'tiny' (~6M), 'small' (S ~12M), 'base' (B ~45M), 'large' (L ~86M), 'single_stage'
+# Model variant - Choose size based on your needs:
+#
+# AVAILABLE SIZES (same names for all modes):
+#   'nano'   (~1M params)  - Lightweight, fast inference, quick experiments
+#   'micro'  (~2M params)  - Small datasets, edge devices
+#   'tiny'   (~6M params)  - Balanced speed/accuracy, development
+#   'small'  (~12M params) - RECOMMENDED for production
+#   'base'   (~45M params) - High accuracy, more compute
+#   'large'  (~86M params) - Maximum accuracy
+#
+# ARCHITECTURE SELECTION (automatic based on mode):
+#
+#   Segmentation Mode (NUM_CLASSES_SEG > 0, NUM_CLASSES_DET = 0):
+#     → Uses multi-stage architecture with downsampling
+#     → Encoder-decoder with hierarchical features
+#     → Optimal for dense prediction tasks
+#
+#   Detection Mode (NUM_CLASSES_SEG = 0, NUM_CLASSES_DET > 0):
+#     → Automatically uses single-stage architecture (no downsampling)
+#     → Preserves spatial resolution for small objects
+#     → Follows author's recommendation for detection
+#
+#   Unified Mode (both > 0):
+#     → Single-Path (USE_DUAL_PATH_UNIFIED=False):
+#       - Uses multi-stage architecture with downsampling
+#       - Shared backbone for both tasks (parameter efficient)
+#     → Dual-Path (USE_DUAL_PATH_UNIFIED=True): ⭐ OPTIMAL
+#       - Segmentation: multi-stage with downsampling
+#       - Detection: single-stage without downsampling
+#       - Each task gets optimal architecture!
+#
+# EXAMPLES:
+#   Segmentation:  MODEL_VARIANT='small' → Uses multi-stage 'small'
+#   Detection:     MODEL_VARIANT='small' → Automatically uses 'single_stage_small'
+#   Unified:       MODEL_VARIANT='small' + USE_DUAL_PATH_UNIFIED=True
+#                  → Seg uses 'small', Det uses 'single_stage_small'
+#
 MODEL_VARIANT = 'nano'
+
+# Dual-Path Architecture for Unified Mode
+# 
+# When True and NUM_CLASSES_SEG > 0 and NUM_CLASSES_DET > 0:
+#   - Uses LitePTDualPathUnified with separate backbones
+#   - Segmentation branch: Multi-stage architecture (MODEL_VARIANT)
+#   - Detection branch: Single-stage architecture (single_stage_{MODEL_VARIANT})
+#   - OPTIMAL performance for both tasks (recommended for production)
+#   - Trade-off: More parameters (~1.5x) and slightly slower training
+#
+# When False:
+#   - Uses LitePTUnifiedCustom with single shared backbone
+#   - Both tasks use same features (downsampled if multi-stage variant)
+#   - Parameter efficient but detection may be suboptimal
+#   - Good for: Limited resources, parameter budget constraints
+#
+# Example configurations:
+#   Best performance:     MODEL_VARIANT='small', USE_DUAL_PATH_UNIFIED=True
+#   Parameter efficient:  MODEL_VARIANT='small', USE_DUAL_PATH_UNIFIED=False
+#   Fast development:     MODEL_VARIANT='nano',  USE_DUAL_PATH_UNIFIED=False
+#
+USE_DUAL_PATH_UNIFIED = True
 
 # Input feature channels (Auto-detected if 'auto')
 # Set to 'auto' to let dataset detect (e.g. 6 for coord+color)
 INPUT_CHANNELS = 6
 
 # Grid size for voxelization (Auto-detected)
-GRID_SIZE = 0.7245
+GRID_SIZE = 0.015
 
 
 # =============================================================================
@@ -242,7 +300,7 @@ def _validate_config():
     if WEIGHT_DECAY < 0:
         errors.append(f"WEIGHT_DECAY cannot be negative, got {WEIGHT_DECAY}")
         
-    valid_variants = ['nano', 'micro', 'tiny', 'small', 'base', 'large', 'single_stage']
+    valid_variants = ['nano', 'micro', 'tiny', 'small', 'base', 'large']
     if MODEL_VARIANT not in valid_variants:
         errors.append(f"Invalid MODEL_VARIANT '{MODEL_VARIANT}'. Must be one of {valid_variants}")
         

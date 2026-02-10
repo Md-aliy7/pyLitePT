@@ -83,7 +83,7 @@ from dataset import CustomDataset
 from hybrid_backend import setup_backends
 from datasets.utils import collate_fn
 # core module imports
-from core import LitePTUnifiedCustom
+from core import LitePTUnifiedCustom, LitePTDualPathUnified
 
 # Import Detection Metrics
 try:
@@ -731,15 +731,50 @@ def main(args):
     
     # 2. Model Creation
     print("\n[MODEL]")
-    print(f"Creating Unified Model: LitePT-{cfg.MODEL_VARIANT}")
     
-    model = LitePTUnifiedCustom(
-        in_channels=input_channels,
-        num_classes_seg=cfg.NUM_CLASSES_SEG,
-        num_classes_det=cfg.NUM_CLASSES_DET,
-        variant=cfg.MODEL_VARIANT,
-        det_config=cfg.DETECTION_CONFIG
-    )
+    # Determine which model class and variant to use based on mode
+    use_dual_path = cfg.USE_DUAL_PATH_UNIFIED and cfg.NUM_CLASSES_SEG > 0 and cfg.NUM_CLASSES_DET > 0
+    
+    # For detection-only mode, automatically use single-stage architecture
+    if cfg.NUM_CLASSES_SEG == 0 and cfg.NUM_CLASSES_DET > 0:
+        # Detection only - use single-stage variant
+        variant_to_use = f'single_stage_{cfg.MODEL_VARIANT}' if not cfg.MODEL_VARIANT.startswith('single_stage_') else cfg.MODEL_VARIANT
+        print(f"Detection Mode: Using single-stage architecture (no downsampling)")
+        print(f"Creating Model: LitePT-{variant_to_use}")
+        model = LitePTUnifiedCustom(
+            in_channels=input_channels,
+            num_classes_seg=cfg.NUM_CLASSES_SEG,
+            num_classes_det=cfg.NUM_CLASSES_DET,
+            variant=variant_to_use,
+            det_config=cfg.DETECTION_CONFIG
+        )
+    elif use_dual_path:
+        # Unified dual-path mode
+        print(f"Unified Mode (Dual-Path): Optimal architecture for both tasks")
+        print(f"  - Segmentation branch: LitePT-{cfg.MODEL_VARIANT} (multi-stage with downsampling)")
+        print(f"  - Detection branch: LitePT-single_stage_{cfg.MODEL_VARIANT} (single-stage, no downsampling)")
+        model = LitePTDualPathUnified(
+            in_channels=input_channels,
+            num_classes_seg=cfg.NUM_CLASSES_SEG,
+            num_classes_det=cfg.NUM_CLASSES_DET,
+            variant=cfg.MODEL_VARIANT,
+            det_config=cfg.DETECTION_CONFIG
+        )
+    else:
+        # Segmentation only or unified single-path mode
+        if cfg.NUM_CLASSES_SEG > 0 and cfg.NUM_CLASSES_DET > 0:
+            print(f"Unified Mode (Single-Path): Shared backbone for both tasks")
+            print(f"Creating Model: LitePT-{cfg.MODEL_VARIANT} (multi-stage with downsampling)")
+        else:
+            print(f"Segmentation Mode: Multi-stage architecture")
+            print(f"Creating Model: LitePT-{cfg.MODEL_VARIANT}")
+        model = LitePTUnifiedCustom(
+            in_channels=input_channels,
+            num_classes_seg=cfg.NUM_CLASSES_SEG,
+            num_classes_det=cfg.NUM_CLASSES_DET,
+            variant=cfg.MODEL_VARIANT,
+            det_config=cfg.DETECTION_CONFIG
+        )
     
     model.to(device)
     
@@ -812,8 +847,14 @@ def main(args):
     patience_counter = 0
     early_stop_patience = getattr(cfg, 'EARLY_STOPPING_PATIENCE', 0)
     
-    # Auto-resume from last checkpoint
-    last_ckpt_path = os.path.join(cfg.RESULTS_DIR, 'last_unified_model.pth')
+    # Auto-resume from last checkpoint (mode-specific naming)
+    if args.mode == 'segmentation':
+        last_ckpt_path = os.path.join(cfg.RESULTS_DIR, 'last_segmentation_model.pth')
+    elif args.mode == 'detection':
+        last_ckpt_path = os.path.join(cfg.RESULTS_DIR, 'last_detection_model.pth')
+    else:  # unified
+        last_ckpt_path = os.path.join(cfg.RESULTS_DIR, 'last_unified_model.pth')
+    
     if getattr(cfg, 'AUTO_RESUME', False) and os.path.exists(last_ckpt_path):
         print(f"\n[AUTO-RESUME] Loading checkpoint: {last_ckpt_path}")
         try:
@@ -933,7 +974,6 @@ def main(args):
             'val_det_mAP_25': det_mAP_25, 
             'val_det_mAP_75': det_mAP_75, 
             'val_det_recall': det_recall,
-            'val_det_recall': det_recall,
             'config': {k: v for k, v in cfg.__dict__.items() if k.isupper()}
         }
         
@@ -944,8 +984,20 @@ def main(args):
              if model.initial_losses is not None:
                  state['gradnorm_initial_losses'] = model.initial_losses.detach().cpu()
         
-        # Save last
-        torch.save(state, os.path.join(cfg.RESULTS_DIR, 'last_unified_model.pth'))
+        # FIXED: Mode-specific checkpoint naming
+        # Determine checkpoint names based on mode
+        if args.mode == 'segmentation':
+            last_ckpt_name = 'last_segmentation_model.pth'
+            best_ckpt_name = 'best_segmentation_model.pth'
+        elif args.mode == 'detection':
+            last_ckpt_name = 'last_detection_model.pth'
+            best_ckpt_name = 'best_detection_model.pth'
+        else:  # unified
+            last_ckpt_name = 'last_unified_model.pth'
+            best_ckpt_name = 'best_unified_model.pth'
+        
+        # Save last checkpoint with mode-specific name
+        torch.save(state, os.path.join(cfg.RESULTS_DIR, last_ckpt_name))
         
         # Save best (COMPOSITE SCORE) based on MODE
         if args.mode == 'segmentation':
@@ -959,28 +1011,31 @@ def main(args):
             # Removes noisy @0.75 and @0.25 from selection logic
             combined_score = (val_acc * 0.5) + (det_mAP_50_ema * 0.5)
         
-        # 1. Best Unified (Composite)
+        # 1. Best Model (Mode-specific naming)
         if combined_score > best_val_acc:
-            print(f"  >>> New Best Unified Model! Score: {combined_score:.4f} (Prev: {best_val_acc:.4f})")
+            mode_label = args.mode.capitalize()
+            print(f"  >>> New Best {mode_label} Model! Score: {combined_score:.4f} (Prev: {best_val_acc:.4f})")
             print(f"      Breakdown: Seg={val_acc*100:.1f}%, EMA(mAP@50)={det_mAP_50_ema*100:.1f}% (Raw={det_mAP_50*100:.1f}%)")
             best_val_acc = combined_score
             patience_counter = 0
-            torch.save(state, os.path.join(cfg.RESULTS_DIR, 'best_unified_model.pth'))
+            torch.save(state, os.path.join(cfg.RESULTS_DIR, best_ckpt_name))
         else:
             patience_counter += 1
             print(f"  [No Improvement] Patience: {patience_counter}/{early_stop_patience if early_stop_patience > 0 else 'Inf'} | Best Score: {best_val_acc:.4f}")
             
-        # 2. Best Segmentation (Pure Accuracy)
-        if val_acc > best_seg_acc:
-             print(f"  >>> New Best Segmentation Model! Acc: {val_acc*100:.2f}%")
-             best_seg_acc = val_acc
-             torch.save(state, os.path.join(cfg.RESULTS_DIR, 'best_seg_model.pth'))
-             
-        # 3. Best Detection (Pure mAP@0.5)
-        if det_mAP_50 > best_det_mAP:
-             print(f"  >>> New Best Detection Model! mAP@0.5: {det_mAP_50*100:.2f}%")
-             best_det_mAP = det_mAP_50
-             torch.save(state, os.path.join(cfg.RESULTS_DIR, 'best_det_model.pth'))
+        # Additional checkpoints only for unified mode
+        if args.mode == 'unified':
+            # 2. Best Segmentation (Pure Accuracy) - Additional checkpoint for unified mode
+            if val_acc > best_seg_acc:
+                 print(f"  >>> New Best Segmentation Model! Acc: {val_acc*100:.2f}%")
+                 best_seg_acc = val_acc
+                 torch.save(state, os.path.join(cfg.RESULTS_DIR, 'best_seg_model.pth'))
+                 
+            # 3. Best Detection (Pure mAP@0.5) - Additional checkpoint for unified mode
+            if det_mAP_50 > best_det_mAP:
+                 print(f"  >>> New Best Detection Model! mAP@0.5: {det_mAP_50*100:.2f}%")
+                 best_det_mAP = det_mAP_50
+                 torch.save(state, os.path.join(cfg.RESULTS_DIR, 'best_det_model.pth'))
              
         if early_stop_patience > 0 and patience_counter >= early_stop_patience:
             print(f"\n  Early stopping triggered (no improvement for {early_stop_patience} epochs)")

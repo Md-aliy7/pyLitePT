@@ -198,60 +198,88 @@ def calculate_optimal_params(stats, data_path=None):
             gt_classes = json.load(f)
     
     # Segmentation classes - from segment.npy files
+    # CRITICAL FIX: LabelCloud and annotation tools often use 0-based indexing
+    # where class 0 is background/default and may not be saved in data
+    # We need to ensure class 0 is included in the count
     if gt_classes:
         params['NUM_CLASSES_SEG'] = len(gt_classes)
         params['CLASS_NAMES'] = gt_classes
     else:
         # Auto-detect from segmentation labels
         if stats['seg_class_counts']:
-            num_seg_classes = len(stats['seg_class_counts'])
+            # Get the maximum class ID found in data
+            max_class_id = max(stats['seg_class_counts'].keys())
+            # NUM_CLASSES should be max_id + 1 to include class 0
+            # Example: if we have classes [1, 2, 3], we need 4 classes (0, 1, 2, 3)
+            num_seg_classes = max_class_id + 1
             params['NUM_CLASSES_SEG'] = num_seg_classes
-            params['CLASS_NAMES'] = [f'class_{i}' for i in sorted(stats['seg_class_counts'].keys())]
+            
+            # Generate class names for ALL classes including 0
+            class_names = []
+            for i in range(num_seg_classes):
+                if i == 0:
+                    class_names.append('background')  # Class 0 is typically background
+                else:
+                    class_names.append(f'class_{i}')
+            params['CLASS_NAMES'] = class_names
         else:
             # Fallback: use detection classes if no segmentation labels found
-            num_seg_classes = len(stats['det_class_counts'])
+            if stats['det_class_counts']:
+                max_class_id = max(stats['det_class_counts'].keys())
+                num_seg_classes = max_class_id + 1
+            else:
+                num_seg_classes = 1
             params['NUM_CLASSES_SEG'] = num_seg_classes
-            params['CLASS_NAMES'] = [f'class_{i}' for i in sorted(stats['det_class_counts'].keys())]
+            params['CLASS_NAMES'] = ['background'] + [f'class_{i}' for i in range(1, num_seg_classes)]
     
     # Class weights for segmentation
+    # CRITICAL FIX: Include class 0 (background) in weight calculation
     if params['NUM_CLASSES_SEG'] > 0 and stats['seg_class_counts']:
         total = sum(stats['seg_class_counts'].values())
         
-        # Get actual class IDs (might not be contiguous)
-        class_ids = sorted(stats['seg_class_counts'].keys())
-        counts = []
-        for cls_id in class_ids:
-            c = stats['seg_class_counts'].get(cls_id, 0)
-            counts.append(c)
-        counts = np.array(counts, dtype=np.float32)
+        # Calculate weights for ALL classes (0 to NUM_CLASSES_SEG-1)
+        weights = []
+        for cls_id in range(params['NUM_CLASSES_SEG']):
+            count = stats['seg_class_counts'].get(cls_id, 0)
+            
+            if count == 0:
+                # Class not found in data (e.g., class 0 background)
+                # Assign a neutral weight (1.0) since we don't have data
+                weights.append(1.0)
+            else:
+                # Standard inverse frequency weighting
+                weight = total / (params['NUM_CLASSES_SEG'] * count)
+                weights.append(weight)
         
-        # Avoid zero division
-        weights = total / (params['NUM_CLASSES_SEG'] * np.maximum(counts, 1))
+        # Normalize weights
+        weights = np.array(weights, dtype=np.float32)
         if weights.min() > 0:
-             weights = weights / weights.min()
+            weights = weights / weights.min()
         params['CLASS_WEIGHTS'] = [round(float(w), 2) for w in weights]
     else:
         params['CLASS_WEIGHTS'] = 'auto'
     
-    # Detection classes - use all classes that have detection boxes
-    # Don't make assumptions about which classes are background
+    # Detection classes - use max class ID + 1 to include class 0
+    # CRITICAL FIX: Detection boxes use 0-based indexing
+    # If we have boxes with class IDs [1, 2, 3], we need 4 classes (0, 1, 2, 3)
     if stats['det_class_counts']:
-        params['NUM_CLASSES_DET'] = len(stats['det_class_counts'])
+        max_det_class = max(stats['det_class_counts'].keys())
+        params['NUM_CLASSES_DET'] = max_det_class + 1
     else:
         params['NUM_CLASSES_DET'] = 0
     
     # Mean Sizes - based on actual detection boxes found
+    # CRITICAL FIX: Create mean sizes for ALL classes (0 to NUM_CLASSES_DET-1)
     mean_sizes = []
-    if params['NUM_CLASSES_DET'] > 0 and stats.get('det_box_sums'):
-        # Get all detection class IDs that have boxes
-        det_class_ids = sorted(stats['det_class_counts'].keys())
-        
-        for cls_id in det_class_ids:
-            if cls_id in stats['det_box_sums'] and stats['det_class_counts'][cls_id] > 0:
+    if params['NUM_CLASSES_DET'] > 0:
+        for cls_id in range(params['NUM_CLASSES_DET']):
+            if cls_id in stats.get('det_box_sums', {}) and stats['det_class_counts'].get(cls_id, 0) > 0:
+                # Class has boxes - use actual mean size
                 s = stats['det_box_sums'][cls_id]
                 c = stats['det_class_counts'][cls_id]
                 mean_sizes.append((s / c).tolist())
             else:
+                # Class has no boxes (e.g., class 0 background) - use default
                 mean_sizes.append([1.0, 1.0, 1.0])
     
     params['MEAN_SIZE'] = mean_sizes
@@ -297,21 +325,35 @@ def print_analysis(stats, params):
     
     if stats['seg_class_counts']:
         total = sum(stats['seg_class_counts'].values())
-        print(f"\n🏷️  Segmentation Classes ({len(stats['seg_class_counts'])}):")
-        for cls_id, count in sorted(stats['seg_class_counts'].items()):
-            pct = 100 * count / total
-            print(f"    Class {cls_id}: {count:>10,} ({pct:>5.2f}%)")
+        print(f"\n🏷️  Segmentation Classes:")
+        print(f"    Detected in data: {sorted(stats['seg_class_counts'].keys())}")
+        print(f"    Total classes (including class 0): {params['NUM_CLASSES_SEG']}")
+        print(f"    Class distribution:")
+        for cls_id in range(params['NUM_CLASSES_SEG']):
+            count = stats['seg_class_counts'].get(cls_id, 0)
+            if count > 0:
+                pct = 100 * count / total
+                print(f"      Class {cls_id}: {count:>10,} ({pct:>5.2f}%)")
+            else:
+                print(f"      Class {cls_id}: {'NOT IN DATA':>10} (background/unlabeled)")
     
     if stats['det_class_counts']:
         total = sum(stats['det_class_counts'].values())
-        print(f"\n📦 Detection Classes ({len(stats['det_class_counts'])}):")
-        for cls_id, count in sorted(stats['det_class_counts'].items()):
-            print(f"    Class {cls_id}: {count:>10,}")
-            if 'det_box_sums' in stats and cls_id in stats['det_box_sums']:
-                 s = stats['det_box_sums'][cls_id]
-                 c = count
-                 m = s / c
-                 print(f"      Mean Size: [{m[0]:.2f}, {m[1]:.2f}, {m[2]:.2f}]")
+        print(f"\n📦 Detection Classes:")
+        print(f"    Detected in data: {sorted(stats['det_class_counts'].keys())}")
+        print(f"    Total classes (including class 0): {params['NUM_CLASSES_DET']}")
+        print(f"    Box distribution:")
+        for cls_id in range(params['NUM_CLASSES_DET']):
+            count = stats['det_class_counts'].get(cls_id, 0)
+            if count > 0:
+                print(f"      Class {cls_id}: {count:>10,} boxes")
+                if 'det_box_sums' in stats and cls_id in stats['det_box_sums']:
+                    s = stats['det_box_sums'][cls_id]
+                    c = count
+                    m = s / c
+                    print(f"        Mean Size: [{m[0]:.2f}, {m[1]:.2f}, {m[2]:.2f}]")
+            else:
+                print(f"      Class {cls_id}: {'NOT IN DATA':>10} (background/no boxes)")
     
     print(f"\n{'='*70}")
     print("⚙️  RECOMMENDED CONFIGURATION")

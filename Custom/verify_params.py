@@ -22,8 +22,10 @@ def verify_models():
     print(f"{'-'*46}")
     
     variants = list(MODEL_CONFIGS.keys())
-    # Sort by size logic if possible, or just standard list
-    ordered = ['nano', 'micro', 'tiny', 'small', 'base', 'large', 'single_stage']
+    # Sort by size logic - show main variants first, then single-stage variants
+    ordered = ['nano', 'micro', 'tiny', 'small', 'base', 'large',
+               'single_stage_nano', 'single_stage_micro', 'single_stage_tiny', 
+               'single_stage_small', 'single_stage_base', 'single_stage_large']
     
     # Dummy config for detection head
     det_config = {
