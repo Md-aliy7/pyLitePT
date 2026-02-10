@@ -263,10 +263,10 @@ class PointCloud(object):
                     labels = None
 
             if labels is None:
-                # No labels found -> Initialize with 1 (Ground) instead of -1 (Ignore)
-                # This ensures the model learns the background class instead of ignoring it.
-                logging.info(f"No existing labels found. Initializing empty labels (1=Ground).")
-                labels = np.full(points.shape[0], 1, dtype=np.int32)
+                # No labels found -> Initialize with default label
+                default_id = LabelConfig().default
+                logging.info(f"No existing labels found. Initializing empty labels ({default_id}={LabelConfig().get_default_class_name()}).")
+                labels = np.full(points.shape[0], default_id, dtype=np.int32)
 
         return cls(
             path,

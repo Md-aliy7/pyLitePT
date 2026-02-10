@@ -243,6 +243,8 @@ class GUI(QtWidgets.QMainWindow):
         self.label_volume: QtWidgets.QLabel
 
         self.controller = control
+        
+        self._add_speed_controls()
 
         # Connect all events to functions
         self.connect_events()
@@ -698,7 +700,67 @@ class GUI(QtWidgets.QMainWindow):
             msg = QMessageBox()
             msg.setWindowTitle("Failed to save a point cloud")
             msg.setText(e.__class__.__name__)
-            msg.setInformativeText(traceback.format_exc())
-            msg.setIcon(QMessageBox.Critical)
             msg.setStandardButtons(QMessageBox.Cancel)
             msg.exec_()
+
+    def _add_speed_controls(self):
+        # Create GroupBox
+        self.speed_controls = QtWidgets.QGroupBox("Camera Speed")
+        font = QtGui.QFont("DejaVu Sans,Arial")
+        font.setBold(True)
+        self.speed_controls.setFont(font)
+        
+        # Constrain width to prevent left panel from expanding
+        self.speed_controls.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+        self.speed_controls.setMaximumWidth(350) 
+        
+        layout = QtWidgets.QVBoxLayout()
+        self.speed_controls.setLayout(layout)
+
+        # Create Slider
+        self.speed_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.speed_slider.setMinimum(5)
+        self.speed_slider.setMaximum(150)
+        self.speed_slider.setValue(100)
+        self.speed_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.speed_slider.setTickInterval(10)
+
+        # Create Label
+        self.speed_label = QtWidgets.QLabel("1.00x")
+        self.speed_label.setAlignment(QtCore.Qt.AlignCenter)
+
+        # Add to layout
+        layout.addWidget(self.speed_label)
+        layout.addWidget(self.speed_slider)
+
+        # Connect signals
+        self.speed_slider.valueChanged.connect(self._on_speed_changed)
+
+        # Find where to insert
+        # bbox_controls is in verticalLayout which is in horizontalLayout
+        central_widget = self.centralWidget()
+        horizontal_layout = central_widget.layout()
+        vertical_layout = horizontal_layout.itemAt(0).layout()
+
+        # Find index of bbox_controls (named 'bbox_controls' in ui file)
+        count = vertical_layout.count()
+        index = -1
+        for i in range(count):
+            item = vertical_layout.itemAt(i)
+            # Find the widget in the layout item
+            widget = item.widget()
+            if widget and widget.objectName() == "bbox_controls":
+                index = i
+                break
+        
+        if index != -1:
+            vertical_layout.insertWidget(index + 1, self.speed_controls)
+        else:
+            # Fallback
+            vertical_layout.addWidget(self.speed_controls)
+
+    def _on_speed_changed(self, value):
+        factor = value / 100.0
+        self.speed_label.setText(f"{factor:.2f}x")
+        self.controller.pcd_manager.set_speed_factor(factor)
+

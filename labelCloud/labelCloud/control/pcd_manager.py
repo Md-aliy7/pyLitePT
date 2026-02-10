@@ -45,6 +45,11 @@ class PointCloudManger(object):
         # TODO: this should integrate with the new label definition setup.
         self.collected_object_classes: Set[str] = set()
         self.saved_perspective: Optional[Perspective] = None
+        self.speed_factor: float = 1.0
+
+    def set_speed_factor(self, factor: float) -> None:
+        self.speed_factor = factor
+        logging.info(f"Set camera speed factor to {factor:.2f}x")
 
     @property
     def pcd_path(self) -> Path:
@@ -187,24 +192,24 @@ class PointCloudManger(object):
     def translate_along_x(self, distance) -> None:
         assert self.pointcloud is not None
         self.pointcloud.set_trans_x(
-            self.pointcloud.trans_x - distance * PointCloudManger.TRANSLATION_FACTOR
+            self.pointcloud.trans_x - distance * PointCloudManger.TRANSLATION_FACTOR * self.speed_factor
         )
 
     def translate_along_y(self, distance) -> None:
         assert self.pointcloud is not None
         self.pointcloud.set_trans_y(
-            self.pointcloud.trans_y + distance * PointCloudManger.TRANSLATION_FACTOR
+            self.pointcloud.trans_y + distance * PointCloudManger.TRANSLATION_FACTOR * self.speed_factor
         )
 
     def translate_along_z(self, distance) -> None:
         assert self.pointcloud is not None
         self.pointcloud.set_trans_z(
-            self.pointcloud.trans_z - distance * PointCloudManger.TRANSLATION_FACTOR
+            self.pointcloud.trans_z - distance * PointCloudManger.TRANSLATION_FACTOR * self.speed_factor
         )
 
     def zoom_into(self, distance) -> None:
         assert self.pointcloud is not None
-        zoom_distance = distance * PointCloudManger.ZOOM_FACTOR
+        zoom_distance = distance * PointCloudManger.ZOOM_FACTOR * self.speed_factor
         self.pointcloud.set_trans_z(self.pointcloud.trans_z + zoom_distance)
 
     def reset_translation(self) -> None:
