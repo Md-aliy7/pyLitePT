@@ -374,37 +374,6 @@ BATCH_SIZE = 4  # Larger batch if possible
 LOSS_BALANCING_METHOD = 'uncertainty'  # Automatic balancing
 ```
 
----
-
-## 📊 Expected Performance
-
-### Segmentation (ScanNet-like dataset)
-| Variant | mIoU | Training Time (100 epochs) |
-|---------|------|---------------------------|
-| nano | ~60% | ~2 hours |
-| micro | ~65% | ~3 hours |
-| small | ~70% | ~6 hours |
-| base | ~75% | ~20 hours |
-
-### Detection (KITTI-like dataset)
-| Variant | mAP@0.5 | Training Time (80 epochs) |
-|---------|---------|--------------------------|
-| nano | ~50% | ~1.5 hours |
-| small | ~65% | ~4 hours |
-| base | ~75% | ~12 hours |
-
-*Note: System automatically uses single-stage architecture for detection mode*
-
-### Unified (Custom dataset)
-| Mode | Seg mIoU | Det mAP | Training Time |
-|------|----------|---------|---------------|
-| Single-path (small) | ~68% | ~60% | ~8 hours |
-| Dual-path (small) | ~70% | ~65% | ~10 hours |
-
-*Note: Actual performance depends on your dataset, hardware, and hyperparameters.*
-
----
-
 ## 🐛 Troubleshooting
 
 ### Issue: Detection mAP is 0%
@@ -476,3 +445,4 @@ NUM_CLASSES_DET = 5
 
 **Last Updated:** 2026-02-10
 **Version:** 2.0
+
