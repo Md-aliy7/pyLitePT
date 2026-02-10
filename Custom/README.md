@@ -33,7 +33,7 @@ python Custom/auto_optimize.py --data_path data --apply
 ## 🚀 Usage
 
 ### 1. Data Preparation
-Export your data from **labelCloud** (same as KPConvX).
+Export your data from **labelCloud**.
 *   **Format**: PLY (`.ply` + `_gt_boxes.npy`) OR NPY Folder.
 *   **Structure**: `train/`, `val/`, `test/`.
 
@@ -72,3 +72,4 @@ Edit `Custom/config.py`:
 *   `NUM_CLASSES_SEG`: Set to >0 to enable segmentation head.
 *   `NUM_CLASSES_DET`: Set to >0 to enable detection head.
 *   `DETECTION_CONFIG`: Configure anchor sizes.
+
