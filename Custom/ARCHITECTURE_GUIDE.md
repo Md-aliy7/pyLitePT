@@ -412,8 +412,6 @@ LOSS_BALANCING_METHOD = 'uncertainty'  # Automatic balancing
 
 - **[Custom/README.md](README.md)**: Quick start guide
 - **[Custom/TRAINING_WORKFLOW.md](TRAINING_WORKFLOW.md)**: Detailed workflow
-- **[MODEL_VARIANTS_GUIDE.md](../MODEL_VARIANTS_GUIDE.md)**: Complete variant reference
-- **[IMPLEMENTATION_SUMMARY.md](../IMPLEMENTATION_SUMMARY.md)**: Implementation details
 
 ---
 
@@ -445,4 +443,5 @@ NUM_CLASSES_DET = 5
 
 **Last Updated:** 2026-02-10
 **Version:** 2.0
+
 
