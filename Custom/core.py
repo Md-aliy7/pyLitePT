@@ -571,3 +571,121 @@ class LitePTDualPathUnified(nn.Module):
             last_stage = self.seg_backbone.enc[-1]
             return list(last_stage.parameters())[-1]
         return None
+
+
+# ============================================================================
+# MODEL FACTORY
+# ============================================================================
+
+def create_unified_model(
+    cfg,
+    input_channels: int,
+    det_config: dict,
+    device: str = 'cuda'
+):
+    """
+    Create unified model with correct architecture based on configuration.
+    
+    This function ensures consistent model instantiation across training,
+    evaluation, and visualization by using the same logic to determine
+    which model class and variant to use.
+    
+    Args:
+        cfg: Configuration object with MODEL_VARIANT, NUM_CLASSES_SEG, 
+             NUM_CLASSES_DET, USE_DUAL_PATH_UNIFIED
+        input_channels: Number of input feature channels
+        det_config: Detection configuration dictionary
+        device: Device to place model on
+        
+    Returns:
+        Initialized model (LitePTUnifiedCustom or LitePTDualPathUnified)
+        
+    Raises:
+        ValueError: If configuration is invalid
+    """
+    # Validate configuration
+    if cfg.NUM_CLASSES_SEG < 0 or cfg.NUM_CLASSES_DET < 0:
+        raise ValueError(f"Invalid class counts: seg={cfg.NUM_CLASSES_SEG}, det={cfg.NUM_CLASSES_DET}")
+    
+    if cfg.NUM_CLASSES_SEG == 0 and cfg.NUM_CLASSES_DET == 0:
+        raise ValueError("At least one of NUM_CLASSES_SEG or NUM_CLASSES_DET must be > 0")
+    
+    # Determine architecture
+    use_dual_path = (
+        cfg.NUM_CLASSES_SEG > 0 and 
+        cfg.NUM_CLASSES_DET > 0 and 
+        getattr(cfg, 'USE_DUAL_PATH_UNIFIED', False)
+    )
+    
+    # Log architecture selection
+    if cfg.NUM_CLASSES_SEG == 0 and cfg.NUM_CLASSES_DET > 0:
+        # Detection only - use single-stage variant
+        variant_to_use = f'single_stage_{cfg.MODEL_VARIANT}' if not cfg.MODEL_VARIANT.startswith('single_stage_') else cfg.MODEL_VARIANT
+        print(f"[Model Factory] Detection Mode: Using single-stage architecture (no downsampling)")
+        print(f"[Model Factory] Creating Model: LitePT-{variant_to_use}")
+        print(f"[Model Factory] Input Channels: {input_channels}")
+        print(f"[Model Factory] Detection Classes: {cfg.NUM_CLASSES_DET}")
+        
+        model = LitePTUnifiedCustom(
+            in_channels=input_channels,
+            num_classes_seg=cfg.NUM_CLASSES_SEG,
+            num_classes_det=cfg.NUM_CLASSES_DET,
+            variant=variant_to_use,
+            det_config=det_config
+        )
+    elif use_dual_path:
+        # Unified dual-path mode
+        print(f"[Model Factory] Unified Mode (Dual-Path): Optimal architecture for both tasks")
+        print(f"[Model Factory]   - Segmentation branch: LitePT-{cfg.MODEL_VARIANT} (multi-stage with downsampling)")
+        print(f"[Model Factory]   - Detection branch: LitePT-single_stage_{cfg.MODEL_VARIANT} (single-stage, no downsampling)")
+        print(f"[Model Factory] Input Channels: {input_channels}")
+        print(f"[Model Factory] Segmentation Classes: {cfg.NUM_CLASSES_SEG}")
+        print(f"[Model Factory] Detection Classes: {cfg.NUM_CLASSES_DET}")
+        
+        model = LitePTDualPathUnified(
+            in_channels=input_channels,
+            num_classes_seg=cfg.NUM_CLASSES_SEG,
+            num_classes_det=cfg.NUM_CLASSES_DET,
+            variant=cfg.MODEL_VARIANT,
+            det_config=det_config
+        )
+    else:
+        # Segmentation only or unified single-path mode
+        if cfg.NUM_CLASSES_SEG > 0 and cfg.NUM_CLASSES_DET > 0:
+            print(f"[Model Factory] Unified Mode (Single-Path): Shared backbone for both tasks")
+            print(f"[Model Factory] Creating Model: LitePT-{cfg.MODEL_VARIANT} (multi-stage with downsampling)")
+        else:
+            print(f"[Model Factory] Segmentation Mode: Multi-stage architecture")
+            print(f"[Model Factory] Creating Model: LitePT-{cfg.MODEL_VARIANT}")
+        
+        print(f"[Model Factory] Input Channels: {input_channels}")
+        print(f"[Model Factory] Segmentation Classes: {cfg.NUM_CLASSES_SEG}")
+        if cfg.NUM_CLASSES_DET > 0:
+            print(f"[Model Factory] Detection Classes: {cfg.NUM_CLASSES_DET}")
+        
+        model = LitePTUnifiedCustom(
+            in_channels=input_channels,
+            num_classes_seg=cfg.NUM_CLASSES_SEG,
+            num_classes_det=cfg.NUM_CLASSES_DET,
+            variant=cfg.MODEL_VARIANT,
+            det_config=det_config
+        )
+    
+    # Log detection head configuration
+    if model.det_head is not None:
+        # Infer detection head input channels
+        if hasattr(model, 'det_backbone'):
+            # Dual-path: detection head gets features from detection backbone
+            det_cfg = MODEL_CONFIGS.get(f'single_stage_{cfg.MODEL_VARIANT}', MODEL_CONFIGS['single_stage_tiny'])
+            det_feat_dim = det_cfg['enc_channels'][-1]
+        else:
+            # Single-path: detection head gets features from shared decoder
+            model_cfg = MODEL_CONFIGS.get(cfg.MODEL_VARIANT, MODEL_CONFIGS['micro'])
+            if len(model_cfg['dec_channels']) > 0:
+                det_feat_dim = model_cfg['dec_channels'][0]
+            else:
+                det_feat_dim = model_cfg['enc_channels'][-1]
+        
+        print(f"[Model Factory] Detection Head Input Channels: {det_feat_dim}")
+    
+    return model.to(device)

@@ -29,7 +29,7 @@ sys.path.insert(0, current)
 import config as cfg
 from dataset import CustomDataset
 from datasets.utils import collate_fn
-from core import LitePTUnifiedCustom
+from core import LitePTUnifiedCustom, create_unified_model
 
 # Import Detection Metrics
 try:
@@ -145,8 +145,8 @@ def evaluate_detection(model, loader, device, num_classes, class_names):
             outputs = model(batch)
             
             # Detection predictions
-            if 'det_output' in outputs and model.det_head is not None:
-                det_out = outputs['det_output']
+            if model.det_head is not None and 'batch_box_preds' in outputs:
+                det_out = outputs
                 if 'batch_box_preds' in det_out and 'gt_boxes' in batch:
                     pred_boxes = det_out['batch_box_preds'].float().cpu().numpy()
                     pred_scores = det_out.get('point_cls_scores', torch.zeros(len(pred_boxes))).float().cpu().numpy()
@@ -245,14 +245,13 @@ def main():
         print("Auto-calculating box mean sizes from dataset...")
         det_config['MEAN_SIZE'] = dataset.calculate_mean_sizes(cfg.NUM_CLASSES_DET)
     
-    model = LitePTUnifiedCustom(
-        in_channels=input_channels,
-        num_classes_seg=cfg.NUM_CLASSES_SEG,
-        num_classes_det=cfg.NUM_CLASSES_DET,
-        variant=cfg.MODEL_VARIANT,
-        det_config=det_config
+    # Use model factory to ensure architecture matches training
+    model = create_unified_model(
+        cfg=cfg,
+        input_channels=input_channels,
+        det_config=det_config,
+        device=device
     )
-    model.to(device)
     
     # Checkpoint
     ckpt_path = args.checkpoint

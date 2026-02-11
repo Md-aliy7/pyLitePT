@@ -52,7 +52,7 @@ sys.path.insert(0, current)
 import config as cfg
 from dataset import CustomDataset
 from datasets.utils import collate_fn
-from core import LitePTUnifiedCustom
+from core import LitePTUnifiedCustom, create_unified_model
 from pcdet_lite.box_utils import boxes_to_corners_3d
 
 
@@ -736,14 +736,13 @@ def main():
         print("Auto-calculating box mean sizes from dataset...")
         det_config['MEAN_SIZE'] = dataset.calculate_mean_sizes(cfg.NUM_CLASSES_DET)
 
-    model = LitePTUnifiedCustom(
-        in_channels=input_channels,
-        num_classes_seg=cfg.NUM_CLASSES_SEG,
-        num_classes_det=cfg.NUM_CLASSES_DET,
-        variant=cfg.MODEL_VARIANT,
-        det_config=det_config
+    # Use model factory to ensure architecture matches training
+    model = create_unified_model(
+        cfg=cfg,
+        input_channels=input_channels,
+        det_config=det_config,
+        device=device
     )
-    model.to(device)
     
     # Checkpoint
     ckpt_path = args.checkpoint
