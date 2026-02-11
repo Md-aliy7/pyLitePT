@@ -33,7 +33,6 @@ pip install -r requirements.txt
 -   `models/`: Core LitePT backbone and detection head architectures.
 -   `pcdet_lite/`: Lightweight 3D detection utility layer.
 -   `backend_cpu/`: Python fallback implementations for GPU-less environments.
--   `MODEL_VARIANTS_GUIDE.md`: Comprehensive guide to all model variants and usage patterns.
 
 ## 📈 Usage
 
