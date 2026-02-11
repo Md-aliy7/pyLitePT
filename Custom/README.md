@@ -65,7 +65,7 @@ python Custom/auto_optimize.py --data_path data --apply
 ## 🚀 Usage
 
 ### 1. Data Preparation
-Export your data from **labelCloud** (same as KPConvX).
+Export your data from **labelCloud**.
 *   **Format**: PLY (`.ply` + `_gt_boxes.npy`) OR NPY Folder.
 *   **Structure**: `train/`, `val/`, `test/`.
 
@@ -364,3 +364,4 @@ Edit `Custom/config.py`:
 
 **Last Updated:** 2026-02-10
 **Version:** 3.0 (Simplified Variant System)
+
