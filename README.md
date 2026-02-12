@@ -7,9 +7,9 @@
 -   **Flexible Architecture**: Multi-stage variants (with downsampling) for segmentation, single-stage variants (no downsampling) for detection.
 -   **Dual-Path Unified Mode**: Optimal multi-task learning with separate backbones - segmentation gets hierarchical features, detection gets high-resolution features.
 -   **Pure Python Backend**: Decoupled from legacy C++/CUDA engines; running natively on CPU and CUDA via PyTorch.
--   **Optimized Performance**: Vectorized IoU/mAP calculation and intelligent class weight caching.
+-   **Optimized Performance**: Vectorized operations, SDPA attention (PyTorch 2.0+), real PointROPE, multi-threaded CPU.
 -   **Data Agnostic**: Built-in support for PLY (labelCloud) and NPY (PCDet-lite) formats with auto-recovery.
--   **Minimalist**: Just `torch`, `numpy`, and `vispy`.
+-   **Minimal Dependencies**: `torch`, `numpy`, `addict`, `timm`, `scipy`, `vispy`.
 
 ## 🛠️ Installation
 
@@ -20,6 +20,10 @@ cd pyLitePT
 
 # Install dependencies
 pip install -r requirements.txt
+
+# (Optional) Install native CUDA backends for 30-50% speedup on GPU
+# Requires NVIDIA GPU + CUDA Drivers
+python install_native_backends.py
 ```
 
 ## 📂 Project Structure
@@ -32,7 +36,10 @@ pip install -r requirements.txt
     - `visualize.py`: 3D visualization GUI
 -   `models/`: Core LitePT backbone and detection head architectures.
 -   `pcdet_lite/`: Lightweight 3D detection utility layer.
--   `backend_cpu/`: Python fallback implementations for GPU-less environments.
+-   `backend_cpu/`: Optimized Python fallback implementations (SDPA attention, vectorized scatter/ball_query/spconv).
+-   `hybrid_backend.py`: Auto-detects GPU libraries (spconv, flash_attn, torch_scatter) and falls back to `backend_cpu/`.
+-   `libs/pointrope.py`: Real 3D Rotary Position Embeddings (vectorized PyTorch, JIT-compiled).
+-   `tests/`: Optimization verification tests.
 
 ## 📈 Usage
 
@@ -68,6 +75,20 @@ python Custom/visualize.py --checkpoint exp/custom_training/best_unified_model.p
 
 - **[Custom/README.md](Custom/README.md)**: Quick start guide
 - **[Custom/TRAINING_WORKFLOW.md](Custom/TRAINING_WORKFLOW.md)**: Detailed training workflow
+- **[Custom/ARCHITECTURE_GUIDE.md](Custom/ARCHITECTURE_GUIDE.md)**: Architecture decisions
+
+## ⚙️ Backend Architecture
+
+The system auto-detects optimal backends via `hybrid_backend.py`:
+
+| Component | GPU (Native) | CPU (Fallback) |
+|-----------|-------------|----------------|
+| Sparse Conv | `spconv` CUDA | `backend_cpu/spconv_cpu.py` (vectorized dense) |
+| Scatter Ops | `torch_scatter` | `backend_cpu/torch_scatter_cpu.py` (scatter_reduce_) |
+| Attention | `flash_attn` | `backend_cpu/attention_cpu.py` (SDPA / JIT) |
+| PointROPE | CUDA kernel | `libs/pointrope.py` (vectorized PyTorch) |
+
+**Threading**: Auto-configures `cpu_count // 2` threads. Override with `TORCH_NUM_THREADS` env var.
 
 ## 📄 License
 This project is licensed under the MIT License - see the `LICENSE` file for details.

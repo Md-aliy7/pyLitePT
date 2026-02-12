@@ -42,10 +42,11 @@ except ImportError:
             spconv = spconv_cpu.pytorch
         except ImportError:
             spconv = None
-try:
-    import flash_attn
-except ImportError:
-    flash_attn = None
+import sys as _sys
+
+def _get_flash_attn():
+    """Lazy lookup: picks up mock injected by setup_backends() even if imported before it runs."""
+    return _sys.modules.get('flash_attn', None)
 from timm.layers import DropPath
 
 from libs.pointrope import PointROPE
@@ -101,62 +102,36 @@ class PointROPEAttention(PointModule):
         pos = point.grid_coord[order] # [N, 3]
         pos = pos.reshape(-1, 3).unsqueeze(0)
 
-        q, k, v = qkv.half().chunk(3, dim=-1)
+        # Preserve AMP autocast dtype on CUDA; use float32 on CPU (no benefit from reduced precision)
+        if qkv.is_cuda:
+            qkv_work = qkv  # Keep whatever dtype AMP autocast set (float16 OR bfloat16)
+        else:
+            qkv_work = qkv.float()
+
+        q, k, v = qkv_work.chunk(3, dim=-1)
         q = q.reshape(-1, H, C // H).transpose(0,1)[None] # [1, H, N, head_dim] 
         k = k.reshape(-1, H, C // H).transpose(0,1)[None] # [1, H, N, head_dim] 
 
-        # workround to make pointrope cuda float32 happy
-        q = self.rope(q.float(), pos).to(q.dtype) # [1, H, N, head_dim] 
-        k = self.rope(k.float(), pos).to(k.dtype) # [1, H, N, head_dim]
+        # apply pointrope (float32 for numerical stability)
+        q = self.rope(q.float(), pos).to(qkv_work.dtype) # [1, H, N, head_dim] 
+        k = self.rope(k.float(), pos).to(qkv_work.dtype) # [1, H, N, head_dim]
 
-        if flash_attn is not None:
-            # assemble input for flash attention
-            qkv_rotated = torch.stack([
-                q.squeeze(0).transpose(0,1),
-                k.squeeze(0).transpose(0,1),
-                v.reshape(-1, H, C // H)
-            ], dim=1) # [N, 3, H, head_dim] 
+        # Assemble input for flash attention (or CPU fallback via mock)
+        qkv_rotated = torch.stack([
+            q.squeeze(0).transpose(0,1),
+            k.squeeze(0).transpose(0,1),
+            v.reshape(-1, H, C // H)
+        ], dim=1) # [N, 3, H, head_dim] 
 
-            feat = flash_attn.flash_attn_varlen_qkvpacked_func(
-                qkv_rotated,
-                cu_seqlens,
-                max_seqlen=self.patch_size,
-                dropout_p=self.attn_drop if self.training else 0,
-                softmax_scale=self.scale,
-            ).reshape(-1, C)
-        else:
-            # CPU fallback: standard scaled dot-product attention
-            # Reshape for batch attention: split by cu_seqlens
-            q_t = q.squeeze(0).transpose(0, 1)  # [N, H, head_dim]
-            k_t = k.squeeze(0).transpose(0, 1)  # [N, H, head_dim]
-            v_t = v.reshape(-1, H, C // H)      # [N, H, head_dim]
-            
-            # Simple global attention as fallback (less efficient but works on CPU)
-            # For each sequence in the batch...
-            batch_size = len(cu_seqlens) - 1
-            feat_list = []
-            for i in range(batch_size):
-                start, end = cu_seqlens[i].item(), cu_seqlens[i+1].item()
-                q_seq = q_t[start:end]  # [seq_len, H, head_dim]
-                k_seq = k_t[start:end]
-                v_seq = v_t[start:end]
-                
-                # [H, seq_len, head_dim] for batch matmul
-                q_seq = q_seq.transpose(0, 1)
-                k_seq = k_seq.transpose(0, 1)
-                v_seq = v_seq.transpose(0, 1)
-                
-                # Attention scores: [H, seq_len, seq_len]
-                attn = torch.matmul(q_seq, k_seq.transpose(-2, -1)) * self.scale
-                attn = self.softmax(attn)
-                
-                # Apply attention to values: [H, seq_len, head_dim]
-                out = torch.matmul(attn, v_seq)
-                # Back to [seq_len, H, head_dim]
-                out = out.transpose(0, 1)
-                feat_list.append(out)
-            
-            feat = torch.cat(feat_list, dim=0).reshape(-1, C).to(qkv.dtype)
+        # Both native flash_attn and the CPU mock use the same interface
+        _flash_attn = _get_flash_attn()
+        feat = _flash_attn.flash_attn_varlen_qkvpacked_func(
+            qkv_rotated,
+            cu_seqlens,
+            max_seqlen=self.patch_size,
+            dropout_p=self.attn_drop if self.training else 0,
+            softmax_scale=self.scale,
+        ).reshape(-1, C)
 
         feat = feat.to(qkv.dtype)
         feat = feat[inverse]

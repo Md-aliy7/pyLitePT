@@ -172,22 +172,26 @@ def _configure_cpu_threading(verbose=True):
     """
     Configure CPU threading for optimal PyTorch performance.
     
-    We use single-threaded mode to avoid overhead from Python's GIL
-    and multiprocessing contention with the fallback implementations.
+    Uses multiple threads to enable parallelism in PyTorch's C++ backend
+    (matmul, softmax, etc.) which are not limited by Python's GIL.
     """
     import os
     
-    # Use only the main thread (no multiprocessing overhead)
-    num_threads = 1
+    # Respect explicit user override
+    if 'TORCH_NUM_THREADS' in os.environ:
+        num_threads = int(os.environ['TORCH_NUM_THREADS'])
+    else:
+        # Auto-detect: use half the available cores (good balance)
+        num_threads = max(1, (os.cpu_count() or 1) // 2)
     
     # Set PyTorch threads
     torch.set_num_threads(num_threads)
     
     # Set OpenMP threads (used by PyTorch's CPU backend)
-    os.environ['OMP_NUM_THREADS'] = str(num_threads)
+    os.environ.setdefault('OMP_NUM_THREADS', str(num_threads))
     
     # Set MKL threads (Intel Math Kernel Library)
-    os.environ['MKL_NUM_THREADS'] = str(num_threads)
+    os.environ.setdefault('MKL_NUM_THREADS', str(num_threads))
     
     # Enable TensorFloat-32 for faster matmul on Ampere+ GPUs
     if torch.cuda.is_available():
