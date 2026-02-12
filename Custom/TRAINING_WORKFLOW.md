@@ -170,20 +170,6 @@ python Custom/visualize.py --checkpoint exp/custom_training/best_unified_model.p
 
 We provide tools to understand your dataset before/after training.
 
-### `analyze_data.py`
-Inspects a single scene (NPY/PLY) to verify data integrity, value ranges, and available channels.
-
-```bash
-python Custom/analyze_data.py --path data/train/scene1/
-```
-
-### `analyze_boxes.py`
-Analyzes bounding box distributions to verify anchor sizes and class balance.
-
-```bash
-python Custom/analyze_boxes.py --data_path data/
-```
-
 ### `auto_optimize.py`
 Calculates optimal class weights and updates `config.py`.
 
@@ -449,3 +435,4 @@ python Custom/train.py --mode unified --format npy
 
 **Last Updated:** 2026-02-10
 **Version:** 3.0 (Simplified Variant System)
+
