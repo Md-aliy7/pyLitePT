@@ -41,6 +41,11 @@ This workflow supports **Unified Training** (Segmentation + Detection), **Dual-P
 
 > [!TIP]
 > Use **labelCloud** to label your data. We support its PLY export and NPY format directly.
+> To use it:
+> ​Navigate to the directory:
+> cd "path/to/labelCloud"
+​> Run the application:
+> python labelCloud.py
 
 ---
 
@@ -435,4 +440,5 @@ python Custom/train.py --mode unified --format npy
 
 **Last Updated:** 2026-02-10
 **Version:** 3.0 (Simplified Variant System)
+
 
