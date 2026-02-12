@@ -37,33 +37,37 @@ class SparseConvTensor:
         self.grid = grid
         
     def dense(self, channels_first=True):
-        """Convert sparse tensor to dense tensor."""
+        """Convert sparse tensor to dense tensor (vectorized)."""
         device = self.features.device
         dtype = self.features.dtype
         C = self.features.shape[1]
+        N = self.indices.shape[0]
+        
+        if N == 0:
+            if channels_first:
+                return torch.zeros(self.batch_size, C, *self.spatial_shape, device=device, dtype=dtype)
+            else:
+                return torch.zeros(self.batch_size, *self.spatial_shape, C, device=device, dtype=dtype)
+        
+        # Extract indices
+        b, x, y, z = self.indices.long().unbind(1)
+        
+        # Bounds-check mask (vectorized)
+        sx, sy, sz = self.spatial_shape
+        valid = (x >= 0) & (x < sx) & (y >= 0) & (y < sy) & (z >= 0) & (z < sz)
         
         if channels_first:
-            dense = torch.zeros(
-                self.batch_size, C, *self.spatial_shape,
-                device=device, dtype=dtype
-            )
-            for i in range(self.indices.shape[0]):
-                b, x, y, z = self.indices[i].long()
-                if (0 <= x < self.spatial_shape[0] and 
-                    0 <= y < self.spatial_shape[1] and 
-                    0 <= z < self.spatial_shape[2]):
-                    dense[b, :, x, y, z] = self.features[i]
+            dense = torch.zeros(self.batch_size, C, sx, sy, sz, device=device, dtype=dtype)
+            if valid.all():
+                dense[b, :, x, y, z] = self.features
+            else:
+                dense[b[valid], :, x[valid], y[valid], z[valid]] = self.features[valid]
         else:
-            dense = torch.zeros(
-                self.batch_size, *self.spatial_shape, C,
-                device=device, dtype=dtype
-            )
-            for i in range(self.indices.shape[0]):
-                b, x, y, z = self.indices[i].long()
-                if (0 <= x < self.spatial_shape[0] and 
-                    0 <= y < self.spatial_shape[1] and 
-                    0 <= z < self.spatial_shape[2]):
-                    dense[b, x, y, z, :] = self.features[i]
+            dense = torch.zeros(self.batch_size, sx, sy, sz, C, device=device, dtype=dtype)
+            if valid.all():
+                dense[b, x, y, z, :] = self.features
+            else:
+                dense[b[valid], x[valid], y[valid], z[valid], :] = self.features[valid]
         
         return dense
     

@@ -198,8 +198,8 @@ def train_one_epoch(model, loader, optimizer, scheduler, seg_criterion, device, 
                             valid_mask = gt_boxes[:, 3:6].sum(axis=1) > 0
                             gt_boxes = gt_boxes[valid_mask]
                             gt_labels = gt_boxes[:, 7].astype(np.int32) if gt_boxes.shape[1] > 7 else np.zeros(len(gt_boxes), dtype=np.int32)
-                            # Issue 6: Increased threshold to 0.3 for higher quality metrics
-                            # Filter noisy boxes before geometry evaluation
+                            # Filter noisy boxes before geometry evaluation (threshold 0.3)
+                            score_mask = pred_scores > 0.3
                             score_mask = pred_scores > 0.3
                             pred_boxes = pred_boxes[score_mask]
                             pred_scores = pred_scores[score_mask]
@@ -377,7 +377,7 @@ def train_one_epoch(model, loader, optimizer, scheduler, seg_criterion, device, 
 
         
         # Stability Monitoring (Check Feature Norms)
-        # As per Issue #4/#6: Large norms indicate explosion
+        # Large norms indicate explosion
         if i % 100 == 0:  # Check every 100 batches
             try:
                 # Traverse back from output point to parents
@@ -551,8 +551,8 @@ def validate_one_epoch(model, loader, seg_criterion, device, num_det_classes=0, 
                         pred_boxes = det_out['batch_box_preds'].float().cpu().numpy()
                         pred_scores = det_out.get('point_cls_scores', torch.zeros(len(pred_boxes))).float().cpu().numpy()
                         
-                        # Issue 6: Increased threshold to 0.3 for higher quality metrics
-                        # Filter noisy boxes before greedy evaluation
+                        # Filter noisy boxes before greedy evaluation (threshold 0.3)
+                        score_mask = pred_scores > 0.3
                         score_mask = pred_scores > 0.3
                         pred_boxes = pred_boxes[score_mask]
                         pred_scores = pred_scores[score_mask]
@@ -783,8 +783,8 @@ def main(args):
     log_model_info(model)
     
     # 3. Training Setup
-    # Issue 4: Detection head uses 2x learning rate for faster convergence
     # Create separate parameter groups for backbone and detection head
+    # Detection head uses 2x learning rate for faster convergence
     param_groups = []
     
     # Backbone and segmentation head parameters (base LR)

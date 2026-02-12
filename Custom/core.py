@@ -22,18 +22,18 @@ except ImportError as e:
 # ============================================================================
 
 MODEL_CONFIGS = {
-    'nano': {  # ~1M params (Formerly Micro)
+    'nano': {  # ~1M params
         'stride': (2, 2, 2, 2),
         'enc_depths': (1, 1, 1, 1, 1),
-        'enc_channels': (16, 32, 64, 112, 224),
-        'enc_num_head': (2, 4, 8, 14, 28),
+        'enc_channels': (16, 32, 64, 108, 216),  # Adjusted for head_dim=18
+        'enc_num_head': (2, 4, 8, 6, 12),
         'enc_patch_size': (128, 128, 128, 128, 128),
         'enc_conv': (True, True, True, False, False),
         'enc_attn': (False, False, False, True, True),
         'enc_rope_freq': (100.0, 100.0, 100.0, 100.0, 100.0),
         'dec_depths': (0, 0, 0, 0),
-        'dec_channels': (32, 32, 64, 112),
-        'dec_num_head': (4, 4, 8, 14),
+        'dec_channels': (32, 32, 64, 108),
+        'dec_num_head': (4, 4, 8, 6),
         'dec_patch_size': (128, 128, 128, 128),
         'dec_conv': (False, False, False, False),
         'dec_attn': (False, False, False, False),
@@ -56,18 +56,18 @@ MODEL_CONFIGS = {
         'dec_attn': (False, False, False, False),
         'dec_rope_freq': (100.0, 100.0, 100.0, 100.0),
     },
-    'tiny': {  # ~6M params (Targeting ~6M)
+    'tiny': {  # ~6M params
         'stride': (2, 2, 2, 2),
         'enc_depths': (1, 1, 1, 2, 1),
-        'enc_channels': (32, 64, 128, 256, 512),
-        'enc_num_head': (2, 4, 8, 16, 32),
+        'enc_channels': (32, 64, 128, 252, 504),  # Adjusted for head_dim=18
+        'enc_num_head': (2, 4, 8, 14, 28),
         'enc_patch_size': (256, 256, 256, 256, 256),
         'enc_conv': (True, True, True, False, False),
         'enc_attn': (False, False, False, True, True),
         'enc_rope_freq': (100.0, 100.0, 100.0, 100.0, 100.0),
         'dec_depths': (0, 0, 0, 0),
-        'dec_channels': (64, 64, 128, 256),
-        'dec_num_head': (4, 4, 8, 16),
+        'dec_channels': (64, 64, 128, 252),
+        'dec_num_head': (4, 4, 8, 14),
         'dec_patch_size': (256, 256, 256, 256),
         'dec_conv': (False, False, False, False),
         'dec_attn': (False, False, False, False),
@@ -128,9 +128,9 @@ MODEL_CONFIGS = {
     # SINGLE-STAGE VARIANTS (Detection-Optimized: No Downsampling)
     # ========================================================================
     'single_stage_nano': {  # Single-stage nano (~0.5M params)
-        'stride': (),  # No downsampling
-        'enc_depths': (6,),  # 6 blocks
-        'enc_channels': (64,),
+        'stride': (),
+        'enc_depths': (6,),
+        'enc_channels': (72,),  # Adjusted for head_dim=18
         'enc_num_head': (4,),
         'enc_patch_size': (128,),
         'enc_conv': (False,),
@@ -146,8 +146,8 @@ MODEL_CONFIGS = {
     },
     'single_stage_micro': {  # Single-stage micro (~1M params)
         'stride': (),
-        'enc_depths': (8,),  # 8 blocks
-        'enc_channels': (96,),
+        'enc_depths': (8,),
+        'enc_channels': (108,),  # Adjusted for head_dim=18
         'enc_num_head': (6,),
         'enc_patch_size': (128,),
         'enc_conv': (False,),
@@ -164,7 +164,7 @@ MODEL_CONFIGS = {
     'single_stage_tiny': {  # Single-stage tiny (~2M params)
         'stride': (),
         'enc_depths': (8,),
-        'enc_channels': (128,),
+        'enc_channels': (144,),  # Adjusted for head_dim=18
         'enc_num_head': (8,),
         'enc_patch_size': (128,),
         'enc_conv': (False,),
@@ -181,7 +181,7 @@ MODEL_CONFIGS = {
     'single_stage_small': {  # Single-stage small (~5M params)
         'stride': (),
         'enc_depths': (8,),
-        'enc_channels': (192,),
+        'enc_channels': (216,),  # Adjusted for head_dim=18
         'enc_num_head': (12,),
         'enc_patch_size': (256,),
         'enc_conv': (False,),
@@ -197,8 +197,8 @@ MODEL_CONFIGS = {
     },
     'single_stage_base': {  # Single-stage base (~15M params)
         'stride': (),
-        'enc_depths': (12,),  # More blocks
-        'enc_channels': (256,),
+        'enc_depths': (12,),
+        'enc_channels': (288,),  # Adjusted for head_dim=18
         'enc_num_head': (16,),
         'enc_patch_size': (512,),
         'enc_conv': (False,),
@@ -215,7 +215,7 @@ MODEL_CONFIGS = {
     'single_stage_large': {  # Single-stage large (~30M params)
         'stride': (),
         'enc_depths': (12,),
-        'enc_channels': (384,),
+        'enc_channels': (432,),  # Adjusted for head_dim=18
         'enc_num_head': (24,),
         'enc_patch_size': (1024,),
         'enc_conv': (False,),

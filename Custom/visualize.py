@@ -52,6 +52,7 @@ sys.path.insert(0, current)
 import config as cfg
 from dataset import CustomDataset
 from datasets.utils import collate_fn
+from hybrid_backend import setup_backends
 from core import LitePTUnifiedCustom, create_unified_model
 from pcdet_lite.box_utils import boxes_to_corners_3d
 
@@ -108,7 +109,8 @@ class PointCloudCanvas(scene.SceneCanvas):
         self.unfreeze()
         
         self.view = self.central_widget.add_view()
-        self.view.camera = scene.TurntableCamera(fov=45, azimuth=45, elevation=30)
+        self.view.camera = scene.ArcballCamera(fov=45, 
+                                               distance=5)
         
         # Point Cloud Visual
         self.scatter = scene.visuals.Markers(parent=self.view.scene)
@@ -668,6 +670,7 @@ def main():
                         help='Data format: ply, npy, or auto (default: auto)')
     args = parser.parse_args()
     
+    setup_backends(verbose=True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     

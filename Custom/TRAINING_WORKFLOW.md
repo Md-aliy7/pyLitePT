@@ -202,12 +202,12 @@ python Custom/auto_optimize.py --apply
 
 1. **Check Data Integrity**
    ```bash
-   python Custom/analyze_data.py --path data/train/scene1/
+   python Custom/verify_params.py
    ```
 
 2. **Verify Configuration**
    ```bash
-   python Custom/verify_params.py
+   python Custom/auto_optimize.py --data_path data --apply
    ```
 
 3. **Run Auto-Optimization**
@@ -434,11 +434,13 @@ python Custom/train.py --mode unified --format npy
 - **Zero mAP** → Check `gt_boxes.npy`, system auto-uses single-stage
 - **NaN Loss** → Reduce learning rate, disable AMP
 - **Slow** → Use smaller variant, enable AMP
+- **Import Errors** → Run `pip install -r requirements.txt` (includes scipy)
+- **CPU Thread Count** → Set `TORCH_NUM_THREADS` env var (default: cpu_count // 2)
 
 ---
 
-**Last Updated:** 2026-02-10
-**Version:** 3.0 (Simplified Variant System)
+**Last Updated:** 2026-02-12
+**Version:** 3.1 (Backend Integration)
 
 
 

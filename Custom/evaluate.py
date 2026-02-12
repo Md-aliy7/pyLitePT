@@ -29,6 +29,7 @@ sys.path.insert(0, current)
 import config as cfg
 from dataset import CustomDataset
 from datasets.utils import collate_fn
+from hybrid_backend import setup_backends
 from core import LitePTUnifiedCustom, create_unified_model
 
 # Import Detection Metrics
@@ -214,6 +215,7 @@ def main():
     parser.add_argument('--data_format', type=str, default='auto', choices=['auto', 'ply', 'npy'])
     args = parser.parse_args()
     
+    setup_backends(verbose=True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     # Reproducibility (Best Practice)

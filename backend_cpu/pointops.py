@@ -134,7 +134,6 @@ def ball_query(radius, nsample, xyz, xyz_batch_cnt, new_xyz, new_xyz_batch_cnt):
     N = new_xyz.shape[0]
     
     # Use KNN then filter by radius
-    # Compute cumulative offsets
     offset_xyz = torch.cumsum(xyz_batch_cnt, dim=0)
     offset_new = torch.cumsum(new_xyz_batch_cnt, dim=0)
     
@@ -144,17 +143,28 @@ def ball_query(radius, nsample, xyz, xyz_batch_cnt, new_xyz, new_xyz_batch_cnt):
     
     # Filter by radius (squared comparison for efficiency)
     radius_sq = radius ** 2
-    valid = dist_sq <= radius_sq
+    valid = dist_sq <= radius_sq  # [N, k_query]
     
-    # Build output: keep first nsample valid indices per query
-    result = torch.full((N, nsample), -1, dtype=torch.long, device=device)
+    # Vectorized: for each row, keep first nsample valid indices
+    # Zero out invalid indices
+    idx_masked = torch.where(valid, idx, torch.tensor(-1, device=device, dtype=idx.dtype))
     
-    for i in range(N):
-        valid_mask = valid[i]
-        valid_idx = idx[i][valid_mask]
-        n_valid = min(len(valid_idx), nsample)
-        if n_valid > 0:
-            result[i, :n_valid] = valid_idx[:n_valid]
+    # Sort each row so valid indices come first (stable sort: -1s go to end)
+    # Use a trick: replace -1 with large value for sorting, then restore
+    sort_key = torch.where(valid, torch.zeros_like(dist_sq), torch.full_like(dist_sq, float('inf')))
+    _, sort_perm = sort_key.sort(dim=1, stable=True)
+    idx_sorted = idx_masked.gather(1, sort_perm)
+    
+    # Take first nsample columns
+    if k_query >= nsample:
+        result = idx_sorted[:, :nsample]
+    else:
+        # Pad with -1 if we queried fewer than nsample
+        pad_size = nsample - k_query
+        result = torch.cat([
+            idx_sorted,
+            torch.full((N, pad_size), -1, dtype=torch.long, device=device)
+        ], dim=1)
     
     return result
 

@@ -342,6 +342,7 @@ LOSS_BALANCING_METHOD = 'uncertainty'  # Automatic balancing
 ## 📚 Documentation
 
 - **[TRAINING_WORKFLOW.md](TRAINING_WORKFLOW.md)** - Detailed step-by-step training guide with troubleshooting
+- **[ARCHITECTURE_GUIDE.md](ARCHITECTURE_GUIDE.md)** - Architecture decisions and backend details
 
 ---
 
@@ -360,8 +361,15 @@ Edit `Custom/config.py`:
 *   `LOSS_BALANCING_METHOD`: `'uncertainty'` (auto), `'gradnorm'`, or `'none'` (static)
 *   `DETECTION_LOSS_WEIGHT`: Balance factor for detection vs segmentation loss
 
+### Backend/Performance
+
+Backends are auto-configured by `hybrid_backend.py` (called in `train.py`, `evaluate.py`, `visualize.py`).
+- **CPU**: Vectorized fallbacks in `backend_cpu/` — no CUDA required.
+- **GPU**: Uses `spconv`, `flash_attn`, `torch_scatter` if installed.
+- **Threading**: Set `TORCH_NUM_THREADS` env var to control CPU parallelism.
+
 ---
 
-**Last Updated:** 2026-02-10
-**Version:** 3.0 (Simplified Variant System)
+**Last Updated:** 2026-02-12
+**Version:** 3.1 (Backend Integration)
 

@@ -123,38 +123,6 @@ Input → Single-stage Encoder → Detection Head → 3D bounding boxes
 
 ---
 
-### 2. Detection Mode
-
-**Configuration:**
-```python
-# Custom/config.py
-NUM_CLASSES_SEG = 0   # Disable segmentation
-NUM_CLASSES_DET = 5   # Your number of classes
-MODEL_VARIANT = 'small'  # Just choose size - system uses single-stage automatically
-```
-
-**System automatically uses:**
-- Single-stage architecture (no downsampling)
-- Encoder-only, preserves spatial resolution
-- Variant: `single_stage_small` (5M params) - automatic!
-
-**Architecture:**
-```
-Input → Single-stage Encoder → Detection Head → 3D bounding boxes
-```
-
-**Why single-stage?**
-- Preserves spatial resolution (no downsampling)
-- Better for small object detection
-- Follows author's recommendation
-
-**Recommended Sizes:**
-- Development: `nano` or `micro`
-- Production: `small` ⭐
-- High accuracy: `base` or `large`
-
----
-
 ### 3. Unified Mode - Single-Path
 
 **Configuration:**
@@ -441,7 +409,21 @@ NUM_CLASSES_DET = 5
 
 ---
 
-**Last Updated:** 2026-02-10
-**Version:** 2.0
+## ⚙️ Backend Architecture
 
+The system auto-detects optimal backends:
+
+| Component | GPU (Native) | CPU (Fallback) |
+|-----------|-------------|----------------|
+| Sparse Conv | `spconv` CUDA | `spconv_cpu.py` (vectorized dense) |
+| Scatter | `torch_scatter` | `torch_scatter_cpu.py` (scatter_reduce_) |
+| Attention | `flash_attn` | `attention_cpu.py` (SDPA / JIT fallback) |
+| PointROPE | CUDA kernel | `pointrope.py` (vectorized PyTorch, JIT) |
+
+**Threading**: `cpu_count // 2` auto-detected. Override: `set TORCH_NUM_THREADS=8`.
+
+---
+
+**Last Updated:** 2026-02-12
+**Version:** 2.1
 
