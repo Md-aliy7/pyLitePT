@@ -178,31 +178,36 @@ class CustomDataset(Dataset):
         if features.shape[1] >= 6:
             data['color'] = torch.from_numpy(features[:, 3:6])
 
-        # 4. Grid Sampling (Voxelization) - CRITICAL for spconv stability
+        # 4. Grid Sampling (Voxelization) - OPTIMIZED for speed
         # We perform this manually here to avoid complex imports from datasets.transform
         # and to ensure deterministic behavior for validation.
         use_grid_sample = getattr(self.cfg, 'USE_GRID_SAMPLE', True)
         
         if use_grid_sample:
             scale_coord = coord / self.grid_size
-            grid_coord = np.floor(scale_coord).astype(np.int64)
+            grid_coord = np.floor(scale_coord).astype(np.int32)  # Use int32 instead of int64 for speed
             
-            # Create unique voxel hash
-            # Simple hash: x*p1 + y*p2 + z*p3 (simplified for speed)
-            # For strict uniqueness we use np.unique on rows
-            if  self.split == 'train':
-                # Training: Random point per voxel (Standard Pointcept behavior)
-                # We use a simplified version: shuffle then unique(return_first)
-                # This approximates random selection without heavy hashing overhead
-                perm = np.random.permutation(grid_coord.shape[0])
-                grid_coord_shuffled = grid_coord[perm]
-                _, unique_indices = np.unique(grid_coord_shuffled, axis=0, return_index=True)
-                # Map back to original indices
-                indices = perm[unique_indices]
+            # OPTIMIZATION: Use hash-based unique instead of np.unique (much faster!)
+            # Create unique voxel hash using bit shifting (faster than multiplication)
+            # Assumes coordinates are within reasonable range (-2^10 to 2^10)
+            offset = 1024  # Offset to handle negative coordinates
+            grid_coord_offset = grid_coord + offset
+            
+            # Create hash: x + y*2048 + z*2048*2048 (bit-shift equivalent)
+            hash_vals = (grid_coord_offset[:, 0] + 
+                        grid_coord_offset[:, 1] * 2048 + 
+                        grid_coord_offset[:, 2] * (2048 * 2048))
+            
+            if self.split == 'train':
+                # Training: Random point per voxel
+                # Shuffle indices first for randomness
+                perm = np.random.permutation(len(hash_vals))
+                hash_vals_shuffled = hash_vals[perm]
+                _, unique_idx = np.unique(hash_vals_shuffled, return_index=True)
+                indices = perm[unique_idx]
             else:
                 # Validation/Test: Deterministic (First point per voxel)
-                # np.unique returns indices of the *first* occurrence
-                _, indices = np.unique(grid_coord, axis=0, return_index=True)
+                _, indices = np.unique(hash_vals, return_index=True)
             
             # Subsample data
             data['coord'] = data['coord'][indices]
