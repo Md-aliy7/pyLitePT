@@ -32,9 +32,6 @@ class ResidualCoder:
         Returns:
             encoded: (N, code_size + C)
         """
-        anchors = torch.clamp(anchors.clone(), min=1e-5)
-        boxes = torch.clamp(boxes.clone(), min=1e-5)
-        
         anchors[:, 3:6] = torch.clamp_min(anchors[:, 3:6], min=1e-5)
         boxes[:, 3:6] = torch.clamp_min(boxes[:, 3:6], min=1e-5)
 

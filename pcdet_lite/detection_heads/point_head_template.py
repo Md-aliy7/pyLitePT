@@ -37,11 +37,15 @@ class PointHeadTemplate(nn.Module):
         reg_loss_type = losses_cfg.get('LOSS_REG', 'smooth-l1')
         if reg_loss_type == 'smooth-l1':
             self.reg_loss_func = F.smooth_l1_loss
-        elif reg_loss_type == 'weighted-smooth-l1':
+        elif reg_loss_type in ('WeightedSmoothL1Loss', 'weighted-smooth-l1'):
             from ..loss_utils import WeightedSmoothL1Loss
             self.reg_loss_func = WeightedSmoothL1Loss(
                 code_weights=losses_cfg.get('LOSS_WEIGHTS', {}).get('code_weights', None)
             )
+        elif reg_loss_type == 'l1':
+            self.reg_loss_func = F.l1_loss
+        else:
+            self.reg_loss_func = F.smooth_l1_loss
 
     @staticmethod
     def make_fc_layers(fc_cfg, input_channels, output_channels):
@@ -82,14 +86,15 @@ class PointHeadTemplate(nn.Module):
         """
         assert len(points.shape) == 2 and points.shape[1] == 4, f'points.shape={points.shape}'
         assert len(gt_boxes.shape) == 3 and gt_boxes.shape[2] == 8, f'gt_boxes.shape={gt_boxes.shape}'
+        assert not (set_ignore_flag and use_ball_constraint), \
+            'set_ignore_flag and use_ball_constraint are mutually exclusive (choose one only)'
         
         batch_size = gt_boxes.shape[0]
         bs_idx = points[:, 0]
         point_cls_labels = points.new_zeros(points.shape[0]).long()
         point_box_labels = gt_boxes.new_zeros((points.shape[0], 8)) if ret_box_labels else None
         point_part_labels = gt_boxes.new_zeros((points.shape[0], 3)) if ret_part_labels else None
-        gt_box_of_points = points.new_full((points.shape[0],), -1).long()
-        num_gt_so_far = 0
+
         
         for k in range(batch_size):
             bs_mask = (bs_idx == k)
@@ -141,11 +146,7 @@ class PointHeadTemplate(nn.Module):
             
             point_cls_labels[bs_mask] = point_cls_labels_single
             
-            # Global indexing for loss normalization
-            batch_box_idxs = box_idxs_of_pts.clone()
-            batch_box_idxs[box_idxs_of_pts >= 0] += num_gt_so_far
-            gt_box_of_points[bs_mask] = batch_box_idxs
-            num_gt_so_far += gt_boxes_k.shape[0]
+
 
             # Box regression labels
             if ret_box_labels and gt_box_of_fg_points.shape[0] > 0:
@@ -172,8 +173,7 @@ class PointHeadTemplate(nn.Module):
         targets_dict = {
             'point_cls_labels': point_cls_labels,
             'point_box_labels': point_box_labels,
-            'point_part_labels': point_part_labels,
-            'gt_box_of_points': gt_box_of_points
+            'point_part_labels': point_part_labels
         }
         return targets_dict
 
@@ -213,28 +213,26 @@ class PointHeadTemplate(nn.Module):
         point_box_preds = self.forward_ret_dict['point_box_preds']
 
         reg_weights = pos_mask.float()
-        
-        # Issue 3 Fix: Normalize per GT box, not per point
-        gt_box_indices = self.forward_ret_dict['gt_box_of_points']
-        pos_gt_indices = gt_box_indices[pos_mask]
-        if len(pos_gt_indices) > 0:
-            # Shift indices to be 0-based within batch if needed, 
-            # but bincount works on non-negative. we just need to handle the counts.
-            # We use a trick to get points per gt:
-            pts_per_gt = torch.bincount(pos_gt_indices)
-            reg_weights[pos_mask] /= pts_per_gt[pos_gt_indices].float()
-            pos_normalizer = (pts_per_gt > 0).sum().float()
-        else:
-            pos_normalizer = torch.tensor(0.0, device=reg_weights.device)
-            
+        pos_normalizer = pos_mask.sum().float()
         reg_weights /= torch.clamp(pos_normalizer, min=1.0)
 
-        point_loss_box_src = self.reg_loss_func(
-            point_box_preds[None, ...], 
-            point_box_labels[None, ...], 
-            reduction='none'
-        )
-        point_loss_box = (point_loss_box_src * reg_weights[None, :, None]).sum()
+        # Use self.reg_loss_func so code_weights are applied when configured
+        if isinstance(self.reg_loss_func, nn.Module):
+            # WeightedSmoothL1Loss: handles code_weights internally, accepts weights param
+            point_loss_box_src = self.reg_loss_func(
+                point_box_preds[None, ...],
+                point_box_labels[None, ...],
+                weights=reg_weights[None, ...]
+            )
+            point_loss_box = point_loss_box_src.sum()
+        else:
+            # F.smooth_l1_loss or F.l1_loss: manual weighting
+            point_loss_box_src = self.reg_loss_func(
+                point_box_preds[None, ...],
+                point_box_labels[None, ...],
+                reduction='none'
+            )
+            point_loss_box = (point_loss_box_src * reg_weights[None, :, None]).sum()
 
         loss_weights_dict = self.model_cfg.get('LOSS_CONFIG', {}).get('LOSS_WEIGHTS', {})
         point_loss_box = point_loss_box * loss_weights_dict.get('point_box_weight', 1.0)

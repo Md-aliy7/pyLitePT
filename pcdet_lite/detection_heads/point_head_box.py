@@ -142,8 +142,7 @@ class PointHeadBox(PointHeadTemplate):
             gt_boxes=gt_boxes, 
             extend_gt_boxes=extend_gt_boxes,
             set_ignore_flag=True, 
-            use_ball_constraint=True,
-            central_radius=2.0,
+            use_ball_constraint=False,  # Must be False when set_ignore_flag=True (mutually exclusive)
             ret_part_labels=False, 
             ret_box_labels=True
         )
@@ -207,7 +206,6 @@ class PointHeadBox(PointHeadTemplate):
             targets_dict = self.assign_targets(batch_dict)
             ret_dict['point_cls_labels'] = targets_dict['point_cls_labels']
             ret_dict['point_box_labels'] = targets_dict['point_box_labels']
-            ret_dict['gt_box_of_points'] = targets_dict['gt_box_of_points']
 
         if not self.training or self.predict_boxes_when_training:
             # Generate predicted boxes

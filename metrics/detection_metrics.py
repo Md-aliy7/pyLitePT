@@ -234,12 +234,15 @@ def compute_precision_recall(
     precision = tp_cumsum / (tp_cumsum + fp_cumsum + 1e-6)
     recall = tp_cumsum / num_gt
     
-    # Compute AP (11-point interpolation)
-    ap = 0.0
-    for t in np.linspace(0, 1, 11):
-        mask = recall >= t
-        if mask.any():
-            ap += precision[mask].max() / 11
+    # Compute AP (All-Point Interpolation, VOC 2010+ / COCO standard)
+    # Make precision monotonically decreasing from right to left
+    mpre = np.concatenate(([0.0], precision, [0.0]))
+    mrec = np.concatenate(([0.0], recall, [1.0]))
+    for i in range(len(mpre) - 1, 0, -1):
+        mpre[i - 1] = max(mpre[i - 1], mpre[i])
+    # Integrate area under the envelope at recall change points
+    idx = np.where(mrec[1:] != mrec[:-1])[0]
+    ap = np.sum((mrec[idx + 1] - mrec[idx]) * mpre[idx + 1])
     
     return precision, recall, ap
 
