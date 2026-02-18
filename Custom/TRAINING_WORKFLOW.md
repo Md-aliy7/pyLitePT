@@ -440,8 +440,3 @@ python Custom/train.py --mode unified --format npy
 - **Slow** → Use smaller variant, enable AMP
 - **Import Errors** → Run `pip install -r requirements.txt` (includes scipy)
 - **CPU Thread Count** → Set `TORCH_NUM_THREADS` env var (default: cpu_count // 2)
-
----
-
-**Last Updated:** 2026-02-18
-**Version:** 3.3 (Metrics & Backend Verification)
