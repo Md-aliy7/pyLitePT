@@ -102,6 +102,3 @@ The system auto-detects optimal backends via `hybrid_backend.py`:
 
 ## 📄 License
 This project is licensed under the MIT License - see the `LICENSE` file for details.
-
----
-*Version 3.3 — Last Updated: 2026-02-18*
