@@ -75,7 +75,3 @@ Custom/
 ├── ARCHITECTURE_GUIDE.md # Technical Deep Dive
 └── README.md           # This file
 ```
-
----
-
-**(c) 2026 LitePT Custom Implementation**
