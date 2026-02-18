@@ -19,7 +19,7 @@ This workflow supports **Unified Training** (Segmentation + Detection), **Dual-P
 
 ### Supported Formats
 
-| Format | Structure | Use Use Case |
+| Format | Structure | Use Case |
 |--------|-----------|----------|
 | **NPY Folder** | Folder with `coord.npy`, `color.npy`, `segment.npy`, `gt_boxes.npy` | **Recommended**. Full features, fast loading. |
 | **PLY** | Single `.ply` file with embedded labels | Quick testing, simple datasets. |
@@ -153,6 +153,9 @@ Run batch evaluation to get mAP and Accuracy:
 ```bash
 python Custom/evaluate.py --checkpoint exp/custom_training/best_unified_model.pth --data_format npy
 ```
+
+> [!NOTE]
+> `evaluate.py` and `visualize.py` use `--data_format`, while `train.py` uses `--format`.
 
 ### Interactive Visualization
 
@@ -322,7 +325,7 @@ DETECTION_CONFIG = {
 ```python
 DETECTION_CONFIG = {
     'LOSS_CONFIG': {
-        'LOSS_REG': 'smooth-l1',
+        'LOSS_REG': 'weighted-smooth-l1',
         'LOSS_WEIGHTS': {
             'point_cls_weight': 1.0,  # Classification loss weight
             'point_box_weight': 1.0,  # Box regression loss weight
@@ -343,6 +346,7 @@ This is where 99% of your interaction happens.
 - **`train.py`**: Main training loop. Handles data loading, unified loss calculation, and checkpointing.
 - **`evaluate.py`**: Validation script. Calculates mAP, Recall, and Segmentation Accuracy on test sets.
 - **`visualize.py`**: Interactive 3D GUI. Visualizes Ground Truth vs Predictions with NMS/Confidence controls.
+- **`postprocess.py`**: **Post-Processing**. Centralized filtration and Non-Maximum Suppression (NMS) logic.
 - **`core.py`**: **Model Definitions**. Defines:
   - `LitePTUnifiedCustom`: Single-path unified model (one backbone for both tasks)
   - `LitePTDualPathUnified`: Dual-path unified model (separate backbones for optimal performance)
@@ -439,8 +443,5 @@ python Custom/train.py --mode unified --format npy
 
 ---
 
-**Last Updated:** 2026-02-12
-**Version:** 3.1 (Backend Integration)
-
-
-
+**Last Updated:** 2026-02-18
+**Version:** 3.3 (Metrics & Backend Verification)

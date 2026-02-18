@@ -39,7 +39,7 @@ MODEL_CONFIGS = {
         'dec_attn': (False, False, False, False),
         'dec_rope_freq': (100.0, 100.0, 100.0, 100.0),
     },
-    'micro': {  # ~2M params (Formerly Nano)
+    'micro': {  # ~2M params
         'stride': (2, 2, 2, 2),
         'enc_depths': (1, 1, 1, 1, 1),
         'enc_channels': (24, 48, 96, 168, 336),
@@ -73,7 +73,7 @@ MODEL_CONFIGS = {
         'dec_attn': (False, False, False, False),
         'dec_rope_freq': (100.0, 100.0, 100.0, 100.0),
     },
-    'small': {  # ~12.7M params - (LitePT-S in Paper) - FIXED to match reference
+    'small': {  # ~12.7M params - (LitePT-S in Paper)
         'stride': (2, 2, 2, 2),
         'enc_depths': (2, 2, 2, 6, 2),
         'enc_channels': (36, 72, 144, 252, 504),
@@ -90,7 +90,7 @@ MODEL_CONFIGS = {
         'dec_attn': (False, False, False, False),  # ADDED
         'dec_rope_freq': (100.0, 100.0, 100.0, 100.0),  # ADDED
     },
-    'base': { # ~45.1M params - (LitePT-B in Paper) - FIXED to match reference
+    'base': { # ~45.1M params - (LitePT-B in Paper)
         'stride': (2, 2, 2, 2),
         'enc_depths': (3, 3, 3, 12, 3),
         'enc_channels': (54, 108, 216, 432, 576),
@@ -107,7 +107,7 @@ MODEL_CONFIGS = {
         'dec_attn': (False, False, False, False),  # ADDED
         'dec_rope_freq': (100.0, 100.0, 100.0, 100.0),  # ADDED
     },
-    'large': { # ~85.9M params - (LitePT-L in Paper) - FIXED to match reference
+    'large': { # ~85.9M params - (LitePT-L in Paper)
         'stride': (2, 2, 2, 2),
         'enc_depths': (3, 3, 3, 12, 3),
         'enc_channels': (72, 144, 288, 576, 864),
@@ -376,24 +376,18 @@ class LitePTUnifiedCustom(nn.Module):
         return outputs
 
     def get_last_shared_layer(self):
-        """Returns the last layer of the shared backbone (decoder) for GradNorm."""
-        # Check if using decoder or encoder-only
+        """Returns the last shared nn.Module of the backbone for GradNorm.
+        
+        GradNorm needs a layer (nn.Module) so it can call .parameters()
+        to compute per-task gradient norms: ||∇_W(w_i * L_i)||
+        
+        Returns:
+            nn.Module or None: The last decoder/encoder stage module.
+        """
         if hasattr(self.backbone, 'dec') and len(self.backbone.dec) > 0:
-            # Last block of the decoder
-            last_stage = self.backbone.dec[-1] 
-            if isinstance(last_stage, nn.Sequential) or isinstance(last_stage, list):
-                 # Iterate to find last Block
-                 for m in reversed(last_stage):
-                     if hasattr(m, 'mlp'): # Block has mlp
-                         return m.mlp[-1].fc2 # Last Linear of MLP
-            
-            return list(self.backbone.dec.parameters())[-1]
-            
+            return self.backbone.dec[-1]  # Return the module itself
         elif hasattr(self.backbone, 'enc') and len(self.backbone.enc) > 0:
-             # Last block of encoder (if enc_mode)
-            last_stage = self.backbone.enc[-1]
-            return list(last_stage.parameters())[-1]
-            
+            return self.backbone.enc[-1]  # Return the module itself
         return None
 
 
@@ -554,22 +548,18 @@ class LitePTDualPathUnified(nn.Module):
         return outputs
     
     def get_last_shared_layer(self):
-        """
-        For GradNorm: Returns the last layer of segmentation backbone.
+        """Returns the last layer of segmentation backbone for GradNorm.
         
         Note: In dual-path, there's no truly "shared" layer, but we use
         the segmentation backbone's last layer as the reference point.
+        
+        Returns:
+            nn.Module or None: The last decoder/encoder stage module.
         """
         if hasattr(self.seg_backbone, 'dec') and len(self.seg_backbone.dec) > 0:
-            last_stage = self.seg_backbone.dec[-1]
-            if isinstance(last_stage, nn.Sequential) or isinstance(last_stage, list):
-                for m in reversed(last_stage):
-                    if hasattr(m, 'mlp'):
-                        return m.mlp[-1].fc2
-            return list(self.seg_backbone.dec.parameters())[-1]
+            return self.seg_backbone.dec[-1]  # Return the module itself
         elif hasattr(self.seg_backbone, 'enc') and len(self.seg_backbone.enc) > 0:
-            last_stage = self.seg_backbone.enc[-1]
-            return list(last_stage.parameters())[-1]
+            return self.seg_backbone.enc[-1]  # Return the module itself
         return None
 
 

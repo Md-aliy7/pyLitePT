@@ -53,8 +53,9 @@ import config as cfg
 from dataset import CustomDataset
 from datasets.utils import collate_fn
 from hybrid_backend import setup_backends
-from core import LitePTUnifiedCustom, create_unified_model
+from core import create_unified_model
 from pcdet_lite.box_utils import boxes_to_corners_3d
+from postprocess import filter_and_nms
 
 
 # =============================================================================
@@ -503,67 +504,21 @@ class MainWindow(QMainWindow):
         if cfg.NUM_CLASSES_DET > 0 and self.show_boxes and 'batch_box_preds' in outputs:
             boxes = outputs['batch_box_preds']
             scores = outputs['point_cls_scores']
-            if scores.dim() == 2: scores = scores.squeeze(1)
-            mask = scores > self.conf_thresh
-            if mask.sum() > 0:
-                boxes_f = boxes[mask]
-                scores_f = scores[mask]
-                
-                boxes_f = boxes_f.float()
-                scores_f = scores_f.float()
-                
-                # Apply NMS (Fast CPU version)
-                t_nms_start = time.time()
-                
-                # Use Fast BEV NMS via torchvision
-                # Calculate AABB (Axis Aligned Bounding Box) for 2D NMS
-                # Box: [x, y, z, dx, dy, dz, heading]
-                x, y = boxes_f[:, 0], boxes_f[:, 1]
-                dx, dy = boxes_f[:, 3], boxes_f[:, 4]
-                heading = boxes_f[:, 6]
-                
-                # Rotate extents to get AABB size
-                cos_h = torch.abs(torch.cos(heading))
-                sin_h = torch.abs(torch.sin(heading))
-                
-                # AABB width/height
-                w_aabb = dx * cos_h + dy * sin_h
-                h_aabb = dx * sin_h + dy * cos_h
-                
-                x1 = x - w_aabb / 2
-                y1 = y - h_aabb / 2
-                x2 = x + w_aabb / 2
-                y2 = y + h_aabb / 2
-                
-                boxes_bev = torch.stack([x1, y1, x2, y2], dim=1)
-                
-                # Check for compiled NMS
-                import torchvision.ops
-                keep_idx = torchvision.ops.nms(boxes_bev, scores_f, iou_threshold=getattr(self, 'iou_thresh', 0.1))
-                
-                if (time.time() - t_nms_start) > 0.1:
-                    print(f"  [Perf] Fast NMS took {(time.time() - t_nms_start):.3f}s (Boxes: {len(boxes_f)})")
-                
-                # keep_idx, _ = nms_gpu(boxes_f, scores_f, thresh=getattr(self, 'iou_thresh', 0.1))
-                
-                pred_boxes = boxes_f[keep_idx].cpu().numpy()
-                final_scores = scores_f[keep_idx].cpu().numpy()
-                
-                # Get class labels for boxes
-                if 'batch_cls_preds' in outputs:
-                     cls_preds = outputs['batch_cls_preds']
-                     if cls_preds.dim() == 2:
-                         # Ensure shapes match before indexing
-                         if cls_preds.shape[0] == boxes.shape[0]:
-                             cls_preds_f = cls_preds[mask][keep_idx]
-                             pred_labels = cls_preds_f.argmax(dim=-1).cpu().numpy()
-                         else:
-                             pred_labels = np.zeros(len(pred_boxes), dtype=int)
-                     else:
-                         pred_labels = np.zeros(len(pred_boxes), dtype=int)
-                else:
-                    pred_labels = np.zeros(len(pred_boxes), dtype=int)
-                
+            cls_preds = outputs.get('batch_cls_preds', None)
+            
+            # Apply confidence filtering + NMS via reusable postprocess module
+            det_result = filter_and_nms(
+                boxes, scores,
+                conf_thresh=self.conf_thresh,
+                iou_thresh=getattr(self, 'iou_thresh', 0.1),
+                cls_preds=cls_preds
+            )
+            
+            pred_boxes = det_result['boxes']
+            final_scores = det_result['scores']
+            pred_labels = det_result['labels']
+            
+            if len(pred_boxes) > 0:
                 # Assign colors based on class
                 if len(pred_labels) > 0 and len(self.colors) > 0:
                      box_colors = self.colors[np.clip(pred_labels, 0, len(self.colors)-1)]
@@ -573,10 +528,8 @@ class MainWindow(QMainWindow):
                 self.canvas_pred.set_boxes(pred_boxes, colors=box_colors)
                 
                 # Add Text Labels (Class + Conf)
-                text_pos = pred_boxes[:, :3] # Center
+                text_pos = pred_boxes[:, :3]
                 text_str = []
-                # Vectorized text creation if possible? VisPy Text needs list of strings.
-                # Optimization: Limit text labels if too many (e.g. > 50) to prevent lag
                 MAX_LABELS = 50
                 if len(pred_boxes) > MAX_LABELS:
                      print(f"  [Perf] Limiting text labels to {MAX_LABELS} (found {len(pred_boxes)})")
@@ -589,7 +542,6 @@ class MainWindow(QMainWindow):
                 if not hasattr(self, 'text_visual_pred'):
                      self.text_visual_pred = scene.visuals.Text(parent=self.canvas_pred.view.scene, color='black', font_size=adaptive_font_size)
                 else:
-                     # Update font size for existing visual
                      self.text_visual_pred.font_size = adaptive_font_size
                 
                 self.text_visual_pred.text = text_str
@@ -670,7 +622,7 @@ def main():
                         help='Data format: ply, npy, or auto (default: auto)')
     args = parser.parse_args()
     
-    setup_backends(verbose=True)
+    setup_backends(verbose=False)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     

@@ -30,7 +30,7 @@ import config as cfg
 from dataset import CustomDataset
 from datasets.utils import collate_fn
 from hybrid_backend import setup_backends
-from core import LitePTUnifiedCustom, create_unified_model
+from core import create_unified_model
 
 # Import Detection Metrics
 try:
@@ -153,17 +153,12 @@ def evaluate_detection(model, loader, device, num_classes, class_names):
                     pred_scores = det_out.get('point_cls_scores', torch.zeros(len(pred_boxes))).float().cpu().numpy()
                     
                     
-                    # PERFORMANCE OPTIMIZATION (R40/57): Filter noisy boxes for faster metric calculation
-                    # CRITICAL FIX: Do NOT threshold hard at 0.05 for mAP calculation.
+                    # Filter noisy boxes for faster metric calculation
                     # We use the model's own score_thresh (now 0.01) which is low enough.
-                    # score_mask = pred_scores > 0.05
-                    # pred_boxes = pred_boxes[score_mask]
-                    # pred_scores = pred_scores[score_mask]
 
-                    # CRITICAL: Assert alignment
+                    # Check alignment
                     if len(pred_scores) != len(pred_boxes):
                         print(f"ERROR: Score alignment mismatch! Boxes: {len(pred_boxes)}, Scores: {len(pred_scores)}")
-                        # Fallback to zeros if mismatch (should not happen with LitePTDetectionHead)
                         pred_scores = np.zeros(len(pred_boxes))
                     
                     if 'batch_cls_preds' in det_out:
@@ -215,7 +210,7 @@ def main():
     parser.add_argument('--data_format', type=str, default='auto', choices=['auto', 'ply', 'npy'])
     args = parser.parse_args()
     
-    setup_backends(verbose=True)
+    setup_backends(verbose=False)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     # Reproducibility (Best Practice)

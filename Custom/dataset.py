@@ -188,15 +188,17 @@ class CustomDataset(Dataset):
             grid_coord = np.floor(scale_coord).astype(np.int32)  # Use int32 instead of int64 for speed
             
             # OPTIMIZATION: Use hash-based unique instead of np.unique (much faster!)
-            # Create unique voxel hash using bit shifting (faster than multiplication)
-            # Assumes coordinates are within reasonable range (-2^10 to 2^10)
-            offset = 1024  # Offset to handle negative coordinates
-            grid_coord_offset = grid_coord + offset
+            # OPTIMIZATION: Use 64-bit hashing to avoid collisions on large scenes
+            # Assumes < 2 million voxels per dimension (2^21). 
+            # With 5cm grid, supports ~100km range per axis. Safe for any scene.
+            grid_coord = grid_coord.astype(np.int64)
+            grid_coord -= grid_coord.min(0, keepdims=True)
             
-            # Create hash: x + y*2048 + z*2048*2048 (bit-shift equivalent)
-            hash_vals = (grid_coord_offset[:, 0] + 
-                        grid_coord_offset[:, 1] * 2048 + 
-                        grid_coord_offset[:, 2] * (2048 * 2048))
+            # Pack 3D coords into single 64-bit integer
+            # z << 42 | y << 21 | x
+            hash_vals = (grid_coord[:, 0] + 
+                        (grid_coord[:, 1] << 21) + 
+                        (grid_coord[:, 2] << 42))
             
             if self.split == 'train':
                 # Training: Random point per voxel

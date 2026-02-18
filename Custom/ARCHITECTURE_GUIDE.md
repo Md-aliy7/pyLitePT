@@ -409,6 +409,47 @@ NUM_CLASSES_DET = 5
 
 ---
 
+## 🔬 Detailed Detection Implementation
+
+### PointRCNN Architecture
+The system uses a **PointRCNN-style** detection head (`PointHeadBox`), chosen for its synergy with point-based backbones. Unlike CenterPoint (which requires voxelization), this head operates directly on point features.
+
+**Pipeline:**
+1.  **Backbone**: `LitePT` (Single-Stage) extracts high-resolution point features.
+2.  **Head**: `PointHeadBox` applies two branches per point:
+    -   **Classification**: Focal Loss (Sigmoid) to classify foreground/background/class.
+    -   **Box Regression**: Weighted Smooth L1 Loss to regress 3D box parameters.
+
+### Box Coding (`PointResidualCoder`)
+-   **Center**: Residual from point coordinate (x, y, z).
+-   **Size**: Log-residual from anchor meant size (dx, dy, dz).
+-   **Heading**: Sin/Cos residual (continuous orientation).
+-   **Total 8 params**: `[x, y, z, dx, dy, dz, cos(heading), sin(heading)]`
+
+### Loss Configuration
+We use `WeightedSmoothL1Loss` to balance the regression targets.
+
+```python
+# Custom/config.py
+DETECTION_CONFIG = {
+    'LOSS_CONFIG': {
+        'LOSS_REG': 'weighted-smooth-l1',  # Supports code_weights
+        'LOSS_WEIGHTS': {
+            'point_cls_weight': 1.0,
+            'point_box_weight': 1.0,
+            'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+        }
+    }
+}
+```
+
+### Robustness Improvements
+-   **0-Based Indexing**: Internal logic is consistently 0-based for class labels (vs OpenPCDet's 1-based mix).
+-   **XOR Logic**: Corrected logic for `ignore_flag` assignment in target generation.
+-   **Negative Coordinates**: Fixed clamping bug to support full 3D space scene centering.
+
+---
+
 ## ⚙️ Backend Architecture
 
 The system auto-detects optimal backends:
@@ -424,6 +465,5 @@ The system auto-detects optimal backends:
 
 ---
 
-**Last Updated:** 2026-02-12
-**Version:** 2.1
-
+**Last Updated:** 2026-02-18
+**Version:** 3.3 (Metrics & Backend Verification)

@@ -180,7 +180,7 @@ GRID_SIZE = 0.015
 # 3D Box Regression Configuration
 DETECTION_CONFIG = {
     # Point Cloud Range [x_min, y_min, z_min, x_max, y_max, z_max]
-    'POINT_CLOUD_RANGE': [-100, -100, -100, 100, 100, 100],
+    'POINT_CLOUD_RANGE': [-1000, -1000, -1000, 1000, 1000, 1000],
     
     # Anchor/Mean Sizes for Box Regression (Order matches class IDs)
     # Set to 'auto' to calculate from training data
@@ -191,7 +191,7 @@ DETECTION_CONFIG = {
 
     # Loss Configuration (Weighted to balance Seg vs Det)
     'LOSS_CONFIG': {
-        'LOSS_REG': 'smooth-l1',
+        'LOSS_REG': 'weighted-smooth-l1',
         'LOSS_WEIGHTS': {
             'point_cls_weight': 1.0,
             'point_box_weight': 1.0,  # Restored to 1.0 to force regression learning

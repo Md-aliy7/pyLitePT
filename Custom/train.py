@@ -45,7 +45,6 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm  # Progress bar
 import threading
 import queue
-from copy import deepcopy
 
 # Standardized seeding for reproducibility
 def set_seed(seed=42):
@@ -60,7 +59,6 @@ def set_seed(seed=42):
 set_seed(42)
 
 # Standardized Error Logger/Notifier
-# (Loggers removed as they were unused)
 
 # Add project root to path
 current = os.path.dirname(os.path.realpath(__file__))
@@ -343,6 +341,56 @@ class EMATracker:
 # TRAINING FUNCTIONS
 # ============================================================================
 
+def _gradnorm_update_weights(model, seg_loss, det_loss, gw, device):
+    """GradNorm weight update step (Chen et al. ICML 2018).
+    
+    Matches GradNorm-main/gradnorm.py exactly:
+    1. Compute loss ratio r_i(t) = L_i(t) / L_i(0)
+    2. Compute relative inverse training rate: rt_i = r_i / mean(r)
+    3. Target gradient norm: target_i = gw_avg * rt_i^alpha
+    4. GradNorm loss: L_grad = sum |gw_i - target_i|
+    5. Update weights, then renormalize (recreate Parameter + optimizer)
+    
+    Args:
+        model: Model with task_weights, weight_optimizer, initial_losses
+        seg_loss: Raw segmentation loss (detached for ratio computation)
+        det_loss: Raw detection loss (detached for ratio computation)
+        gw: Tensor of shape (2,) containing per-task gradient norms G_W(i),
+            computed WITH create_graph=True so weights stay in the graph
+        device: torch device
+    """
+    # Loss ratio per task: r_i(t) = L_i(t) / L_i(0)
+    loss_ratio = torch.stack([
+        seg_loss.detach() / (model.initial_losses[0] + 1e-8),
+        det_loss.detach() / (model.initial_losses[1] + 1e-8)
+    ])
+    
+    # Relative inverse training rate: rt_i = r_i / mean(r)
+    rt = loss_ratio / loss_ratio.mean()
+    
+    # Average gradient norm (detached — serves as target scale)
+    gw_avg = gw.mean().detach()
+    
+    # Target gradient norms (detached — these are constants)
+    alpha = getattr(cfg, 'GRADNORM_ALPHA', 1.5)
+    constant = (gw_avg * rt ** alpha).detach()
+    
+    # GradNorm loss: L_grad = sum |G_W(i) - target_i|
+    # gw has gradient flow to task_weights via create_graph=True
+    gradnorm_loss = torch.abs(gw - constant).sum()
+    
+    # Update weights
+    model.weight_optimizer.zero_grad()
+    gradnorm_loss.backward()
+    model.weight_optimizer.step()
+    
+    # Renormalize weights: recreate Parameter + optimizer (matches reference)
+    T = 2.0  # Number of tasks
+    with torch.no_grad():
+        new_weights = (model.task_weights / model.task_weights.sum() * T).detach()
+    model.task_weights = torch.nn.Parameter(new_weights.to(device))
+    model.weight_optimizer = torch.optim.Adam([model.task_weights], lr=0.025)
+
 def train_one_epoch(model, loader, optimizer, scheduler, seg_criterion, device, epoch, scaler=None, num_det_classes=0, class_names=None):
     """Train one epoch with verbose per-batch logging and memory optimizations."""
     import gc  # Memory management
@@ -425,7 +473,6 @@ def train_one_epoch(model, loader, optimizer, scheduler, seg_criterion, device, 
                             gt_labels = gt_boxes[:, 7].astype(np.int32) if gt_boxes.shape[1] > 7 else np.zeros(len(gt_boxes), dtype=np.int32)
                             # Filter noisy boxes before geometry evaluation (threshold 0.3)
                             score_mask = pred_scores > 0.3
-                            score_mask = pred_scores > 0.3
                             pred_boxes = pred_boxes[score_mask]
                             pred_scores = pred_scores[score_mask]
                             
@@ -462,11 +509,13 @@ def train_one_epoch(model, loader, optimizer, scheduler, seg_criterion, device, 
                 
                 log_vars = model.log_vars
                 
-                # Segmentation (Index 0)
+                # Segmentation (Classification — Index 0)
+                # Kendall et al.: L_cls = exp(-s) * L + s  (NO 0.5 for classification)
                 precision_seg = torch.exp(-log_vars[0])
-                loss_seg_weighted = 0.5 * seg_loss * precision_seg + 0.5 * log_vars[0]
+                loss_seg_weighted = seg_loss * precision_seg + log_vars[0]
                     
-                # Detection (Index 1)
+                # Detection (Regression — Index 1)
+                # Kendall et al.: L_reg = 0.5 * exp(-s) * L + 0.5 * s
                 precision_det = torch.exp(-log_vars[1])
                 loss_det_weighted = 0.5 * det_loss * precision_det + 0.5 * log_vars[1]
                 
@@ -476,60 +525,43 @@ def train_one_epoch(model, loader, optimizer, scheduler, seg_criterion, device, 
                 total_metrics['w_det'] = precision_det.item()
                 
             elif loss_balancing_method == 'gradnorm':
-                # GradNorm Implementation (Chen et al. 2018)
+                # ============================================================
+                # GradNorm (Chen et al. ICML 2018)
+                # Reference: GradNorm-main/gradnorm.py
+                # ============================================================
                 
-                # 0. Initialize initial losses if first batch
+                # 0. Initialize L(0) on first batch
                 if model.initial_losses is None:
                     model.initial_losses = torch.tensor([seg_loss.item(), det_loss.item()], device=device)
                 
-                # 1. Weighted Loss for Model Update
-                # Renormalize weights so they sum to 2 (number of tasks)
-                # "The weighted loss L is computed as \sum w_i(t) * L_i(t)"
-                # "In every step, we also renormalize w_i(t) so that \sum w_i(t) = T"
-                
-                # Detach weights for the model graph (treated as constants for model backprop)
+                # 1. Compute weighted loss for MODEL update (weights detached)
                 w_seg = model.task_weights[0].detach()
                 w_det = model.task_weights[1].detach()
-                
-                # Ensure renormalization (optional but standard in GradNorm)
-                # norm_factor = 2.0 / (w_seg + w_det + 1e-6)
-                # w_seg = w_seg * norm_factor
-                # w_det = w_det * norm_factor
-                
-                weighted_seg_loss = w_seg * seg_loss
-                weighted_det_loss = w_det * det_loss
-                loss = weighted_seg_loss + weighted_det_loss
+                loss = w_seg * seg_loss + w_det * det_loss
                 
                 total_metrics['w_seg'] = w_seg.item()
                 total_metrics['w_det'] = w_det.item()
                 
-                # 2. GradNorm Weight Update (Deferred)
-                # We need to compute gradients w.r.t shared layer *before* graph is consumed by main backward
-                # and before we update any weights.
-                
-                # We store these purely for the GradNorm step later
+                # 2. Compute per-task gradient norms G_W(i) = ||∇_W(w_i * L_i)||
+                #    These use create_graph=True so task_weights stay in the graph
                 shared_layer = model.get_last_shared_layer()
-                g1_norm, g2_norm = None, None
+                gw = None  # Will be set if shared_layer exists
                 
                 if shared_layer is not None:
-                     # Compute raw gradients for each task
-                     # We use retain_graph=True so main backward can still run
-                     # Note: seg_loss and det_loss are the raw losses
-                     
-                     # We need to handle AMP scaling if active, but autograd.grad usually handles unscaled?
-                     # No, if use_amp, losses are small. 
-                     # GradNorm paper uses standard gradients. 
-                     # If we use scaler.scale(loss), we get scaled gradients.
-                     # For GradNorm, we should probably use unscaled gradients or consistently scaled ones.
-                     # Let's use unscaled to match the paper's definition of "gradient norm".
-                     # However, if using AMP, unscaled gradients might be underflowing? 
-                     # Usually we can just use the raw loss.
-                     
-                     g1 = torch.autograd.grad(seg_loss, shared_layer, retain_graph=True, create_graph=True)[0]
-                     g2 = torch.autograd.grad(det_loss, shared_layer, retain_graph=True, create_graph=True)[0]
-                     
-                     g1_norm = torch.norm(g1, 2)
-                     g2_norm = torch.norm(g2, 2)
+                    shared_params = list(shared_layer.parameters())
+                    if len(shared_params) > 0:
+                        task_losses = [seg_loss, det_loss]
+                        gw_list = []
+                        for i in range(2):
+                            grads = torch.autograd.grad(
+                                model.task_weights[i] * task_losses[i],
+                                shared_params,
+                                retain_graph=True,
+                                create_graph=True
+                            )
+                            gw_list.append(torch.norm(torch.stack([torch.norm(g, 2) for g in grads]), 2))
+                        gw = torch.stack(gw_list)  # Shape: (2,)
+                
             else:
                 # Standard Static Weighting
                 det_weight = getattr(cfg, 'DETECTION_LOSS_WEIGHT', 1.0)
@@ -540,37 +572,9 @@ def train_one_epoch(model, loader, optimizer, scheduler, seg_criterion, device, 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             
-            # --- GRADNORM UPDATE STEP ---
-            if loss_balancing_method == 'gradnorm' and g1_norm is not None:
-                 model.weight_optimizer.zero_grad()
-                 
-                 # Calculate Target
-                 g_avg = (g1_norm + g2_norm) / 2.0
-                 
-                 # Relative Inverse Training Rate
-                 l1_hat = seg_loss.detach() / (model.initial_losses[0] + 1e-8)
-                 l2_hat = det_loss.detach() / (model.initial_losses[1] + 1e-8)
-                 l_avg = (l1_hat + l2_hat) / 2.0
-                 
-                 inv_rate1 = l1_hat / l_avg
-                 inv_rate2 = l2_hat / l_avg
-                 
-                 alpha = getattr(cfg, 'GRADNORM_ALPHA', 1.5)
-                 t1 = g_avg * (inv_rate1 ** alpha)
-                 t2 = g_avg * (inv_rate2 ** alpha)
-                 
-                 # L_grad: Minimize difference between (w_i * g_i) and target
-                 # Note: We use the attached task_weights here to get gradients for them
-                 l_grad = torch.abs(model.task_weights[0] * g1_norm.detach() - t1.detach()) + \
-                          torch.abs(model.task_weights[1] * g2_norm.detach() - t2.detach())
-                 
-                 l_grad.backward()
-                 model.weight_optimizer.step()
-                 
-                 # Renormalize
-                 with torch.no_grad():
-                    w_sum = model.task_weights.sum()
-                    model.task_weights.div_(w_sum / 2.0)
+            # --- GRADNORM WEIGHT UPDATE ---
+            if loss_balancing_method == 'gradnorm' and gw is not None:
+                _gradnorm_update_weights(model, seg_loss, det_loss, gw, device)
                     
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=getattr(cfg, 'GRAD_CLIP_NORM', 10.0))
             scaler.step(optimizer)
@@ -578,24 +582,9 @@ def train_one_epoch(model, loader, optimizer, scheduler, seg_criterion, device, 
         else:
              loss.backward()
              
-             # --- GRADNORM UPDATE STEP (Non-AMP) ---
-             if loss_balancing_method == 'gradnorm' and g1_norm is not None:
-                 model.weight_optimizer.zero_grad()
-                 g_avg = (g1_norm + g2_norm) / 2.0
-                 l1_hat = seg_loss.detach() / (model.initial_losses[0] + 1e-8)
-                 l2_hat = det_loss.detach() / (model.initial_losses[1] + 1e-8)
-                 l_avg = (l1_hat + l2_hat) / 2.0
-                 inv_rate1, inv_rate2 = l1_hat / l_avg, l2_hat / l_avg
-                 alpha = getattr(cfg, 'GRADNORM_ALPHA', 1.5)
-                 t1, t2 = g_avg * (inv_rate1 ** alpha), g_avg * (inv_rate2 ** alpha)
-                 
-                 l_grad = torch.abs(model.task_weights[0] * g1_norm.detach() - t1.detach()) + \
-                          torch.abs(model.task_weights[1] * g2_norm.detach() - t2.detach())
-                 
-                 l_grad.backward()
-                 model.weight_optimizer.step()
-                 with torch.no_grad():
-                    model.task_weights.div_(model.task_weights.sum() / 2.0)
+             # --- GRADNORM WEIGHT UPDATE (Non-AMP) ---
+             if loss_balancing_method == 'gradnorm' and gw is not None:
+                _gradnorm_update_weights(model, seg_loss, det_loss, gw, device)
              
              torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=getattr(cfg, 'GRAD_CLIP_NORM', 10.0))
              optimizer.step()
@@ -779,7 +768,6 @@ def validate_one_epoch(model, loader, seg_criterion, device, num_det_classes=0, 
                         
                         # Filter noisy boxes before greedy evaluation (threshold 0.3)
                         score_mask = pred_scores > 0.3
-                        score_mask = pred_scores > 0.3
                         pred_boxes = pred_boxes[score_mask]
                         pred_scores = pred_scores[score_mask]
                         
@@ -881,7 +869,8 @@ def main(args):
     print("LitePT UNIFIED TRAINING - Segmentation + Detection".center(80))
     print("=" * 80)
     
-    setup_backends(verbose=True)
+    # Setup backends (silently)
+    setup_backends(verbose=False)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}")
     
@@ -1055,11 +1044,11 @@ def main(args):
     gradnorm_optimizer = None
     if getattr(cfg, 'LOSS_BALANCING_METHOD', 'uncertainty') == 'gradnorm':
         print("[GradNorm] Initializing task weights...")
-        # Attach to model for easy access in train loop (optional, but convenient)
-        model.task_weights = torch.ones(2, device=device, requires_grad=True)
+        # Use nn.Parameter matching reference (GradNorm-main/gradnorm.py:42-43)
+        model.task_weights = torch.nn.Parameter(torch.ones(2, device=device))
         model.weight_optimizer = torch.optim.Adam([model.task_weights], lr=0.025)
-        model.initial_losses = None # Will be set in first batch
-        gradnorm_optimizer = model.weight_optimizer # Alias for saving
+        model.initial_losses = None  # Will be set in first batch
+        gradnorm_optimizer = model.weight_optimizer  # Alias for saving
 
     
     # 4. Training Loop
@@ -1119,9 +1108,12 @@ def main(args):
                 # Load GradNorm state if available
                 if gradnorm_optimizer is not None and 'gradnorm_weights' in ckpt:
                     try:
-                        model.task_weights.data = ckpt['gradnorm_weights'].to(device)
+                        # Recreate Parameter + optimizer with loaded weights
+                        loaded_weights = ckpt['gradnorm_weights'].to(device)
+                        model.task_weights = torch.nn.Parameter(loaded_weights)
+                        model.weight_optimizer = torch.optim.Adam([model.task_weights], lr=0.025)
                         if 'gradnorm_optimizer_state_dict' in ckpt:
-                            gradnorm_optimizer.load_state_dict(ckpt['gradnorm_optimizer_state_dict'])
+                            model.weight_optimizer.load_state_dict(ckpt['gradnorm_optimizer_state_dict'])
                         if 'gradnorm_initial_losses' in ckpt:
                              model.initial_losses = ckpt['gradnorm_initial_losses'].to(device)
                         print("  > GradNorm state restored.")

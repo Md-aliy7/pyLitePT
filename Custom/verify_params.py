@@ -1,7 +1,6 @@
 
 import os
 import sys
-import torch
 
 # Add project root
 current = os.path.dirname(os.path.realpath(__file__))
