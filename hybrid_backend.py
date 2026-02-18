@@ -21,7 +21,7 @@ BACKEND_STATUS = {
 }
 
 
-def setup_backends(verbose=True):
+def setup_backends(verbose=False):
     """
     Setup hybrid backends with graceful fallback.
     

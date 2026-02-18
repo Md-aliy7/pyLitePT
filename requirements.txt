@@ -8,13 +8,12 @@ timm
 addict
 tqdm
 scipy
+colorhash
 
 # Visualization
 vispy
 PySide6
 
 # Optional / Platform Specific
-# Native CUDA Backends (Uncomment if you have NVIDIA GPU + Drivers)
-# spconv-cu120                 # For PyTorch 2.x + CUDA 12.x (Fastest sparse conv)
-# torch-scatter                # For faster scatter_reduce (if available for your PT version)
-# flash-attn                   # For fastest attention (Linux recommended, Windows tricky)
+# spconv-cu120                 # Uncomment for NVIDIA GPU support (Fastest sparse conv)
+# flash-attn                   # Uncomment for fastest attention (Linux recommended)

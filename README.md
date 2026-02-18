@@ -51,8 +51,7 @@ python install_native_backends.py
 Edit `Custom/config.py` to set your dataset paths, class names, and model variant:
 ```python
 # Choose model variant based on your task
-MODEL_VARIANT = 'small'  # For segmentation or unified mode
-# MODEL_VARIANT = 'single_stage_small'  # For detection-only mode
+MODEL_VARIANT = 'small'  # System auto-selects architecture based on mode
 
 # Enable dual-path for optimal unified mode
 USE_DUAL_PATH_UNIFIED = True  # Separate backbones for seg/det
@@ -61,19 +60,26 @@ USE_DUAL_PATH_UNIFIED = True  # Separate backbones for seg/det
 ### 2. Train
 ```bash
 # Segmentation only
-python Custom/train.py --mode segmentation
+python Custom/train.py --mode segmentation --format npy
 
-# Detection only (use single_stage variant in config)
-python Custom/train.py --mode detection
+# Detection only (auto-uses single-stage architecture)
+python Custom/train.py --mode detection --format npy
 
 # Unified mode (dual-path recommended for best performance)
-python Custom/train.py --mode unified
+python Custom/train.py --mode unified --format npy
 ```
 
-### 3. Visualize
+### 3. Evaluate
+```bash
+python Custom/evaluate.py --checkpoint exp/custom_training/best_unified_model.pth --data_format npy
+```
+
+### 4. Visualize
 ```bash
 python Custom/visualize.py --checkpoint exp/custom_training/best_unified_model.pth --data_format npy
 ```
+
+> **Note:** `train.py` uses `--format`, while `evaluate.py` and `visualize.py` use `--data_format`.
 
 ## 📚 Documentation
 
@@ -96,3 +102,6 @@ The system auto-detects optimal backends via `hybrid_backend.py`:
 
 ## 📄 License
 This project is licensed under the MIT License - see the `LICENSE` file for details.
+
+---
+*Version 3.3 — Last Updated: 2026-02-18*
