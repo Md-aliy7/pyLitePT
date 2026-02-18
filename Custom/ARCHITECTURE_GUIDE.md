@@ -462,8 +462,3 @@ The system auto-detects optimal backends:
 | PointROPE | CUDA kernel | `pointrope.py` (vectorized PyTorch, JIT) |
 
 **Threading**: `cpu_count // 2` auto-detected. Override: `set TORCH_NUM_THREADS=8`.
-
----
-
-**Last Updated:** 2026-02-18
-**Version:** 3.3 (Metrics & Backend Verification)
