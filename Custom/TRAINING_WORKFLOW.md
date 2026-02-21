@@ -40,11 +40,16 @@ This workflow supports **Unified Training** (Segmentation + Detection), **Dual-P
 ```
 
 > [!TIP]
-> Use **labelCloud** to label your data. We support its PLY export and NPY format directly.
+> Use **labelCloud** to annotate your data. It supports both segmentation painting and 3D bounding box drawing.
 >
-> To use it:
-> 1. Navigate to the directory: `cd "path/to/labelCloud"`
-> 2. Run the application: `python labelCloud.py`
+> **Using labelCloud:**
+> 1. Launch the application: `cd labelCloud && python labelCloud.py`
+> 2. **Initial Setup:** On the startup dialog, set **Default split** (`train`, `val`, `test`).
+> 3. **Formats:** The system supports `npy_folder` or `ply` for Data export format. For bounding boxes, ensure Label export format is set to `centroid_abs` to preserve legacy support, or use `vertices`.
+> 4. **Labeling:**
+>    - Use `1-9` keys to select bounding boxes.
+>    - Press `Ctrl + S` to save. Your exports will automatically be placed into `<ProjectRoot>/data/<split>` thanks to our updated config!
+> 5. **Sync:** Your class definitions from `labelCloud/labels/_classes.json` are automatically loaded into LitePT by `auto_optimize.py`.
 
 ---
 

@@ -23,8 +23,9 @@ This folder contains the **Unified LitePT** implementation for training on custo
 ## ⚡ Quick Start
 
 ### 1. Data Preparation
-Export from **labelCloud** as **NPY Folder** (Recommended) or **PLY**.
-Structure: `data/train/scene1/...`, `data/val/...`
+Export from **labelCloud** using **Unified Mode**.
+- Set data export format to **NPY Folder** (Recommended) or **PLY**, and press `Ctrl+S` to save directly to `data/train/`, `data/val/`, etc.
+- Your defined classes in labelCloud are intrinsically synchronized with the pipeline's auto-optimizer.
 
 ### 2. Auto-Configuration
 Analyze your dataset to automatically set class weights and anchor sizes:

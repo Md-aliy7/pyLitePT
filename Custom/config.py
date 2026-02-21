@@ -36,7 +36,7 @@ RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__fi
 
 # Class names (Auto-loaded from classes.json if available)
 # Default to empty list - will be populated from dataset
-CLASS_NAMES = ['ground', 'cart']
+CLASS_NAMES = ['cart', 'trial', 'wall', 'table', 'book', 'chair']
 _classes_json = os.path.join(DATA_PATH, 'classes.json')
 if os.path.exists(_classes_json):
     import json
@@ -53,7 +53,7 @@ elif os.path.exists(DATA_PATH):
             break
 
 # Number of segmentation classes (Auto-derived)
-NUM_CLASSES_SEG = 2
+NUM_CLASSES_SEG = 6
 
 # Validation: Ensure classes are defined
 if NUM_CLASSES_SEG == 0 and not os.path.exists(os.path.join(DATA_PATH, 'classes.json')):
@@ -72,7 +72,7 @@ LABEL_MAPPING = {}
 # Number of detection classes
 # Use all segmentation classes for detection by default
 # The auto-optimizer will set this based on actual detection boxes in the dataset
-NUM_CLASSES_DET = 1
+NUM_CLASSES_DET = 6
 
 # =============================================================================
 # TRAINING HYPERPARAMETERS (adjust as needed)
@@ -95,7 +95,7 @@ GRAD_CLIP_NORM = 1.0
 
 # Class weights (Auto-calculated if 'auto')
 # Cart (few points) -> High weight, Ground (many points) -> Low weight
-CLASS_WEIGHTS = [16.6, 1.0]
+CLASS_WEIGHTS = [1.0, 177.29, 17.58, 9.51, 21.36, 5078.0]
 
 # Training steps per epoch (set to None for full epoch)
 TRAIN_STEPS_PER_EPOCH = None

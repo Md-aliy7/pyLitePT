@@ -190,12 +190,23 @@ def calculate_optimal_params(stats, data_path=None):
     
     # Check for classes.json (Ground Truth)
     classes_json_path = os.path.join(data_path, 'classes.json') if data_path else None
+    labelcloud_classes_path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'labelCloud', 'labels', '_classes.json')
     
     gt_classes = None
+    import json
     if classes_json_path and os.path.exists(classes_json_path):
-        import json
         with open(classes_json_path, 'r') as f:
-            gt_classes = json.load(f)
+            data = json.load(f)
+            if isinstance(data, dict) and "classes" in data:
+                gt_classes = [c["name"] for c in sorted(data["classes"], key=lambda x: x.get("id", 0))]
+            else:
+                gt_classes = data
+
+    if not gt_classes and os.path.exists(labelcloud_classes_path):
+        with open(labelcloud_classes_path, 'r') as f:
+            data = json.load(f)
+            if isinstance(data, dict) and "classes" in data:
+                gt_classes = [c["name"] for c in sorted(data["classes"], key=lambda x: x.get("id", 0))]
     
     # Segmentation classes - from segment.npy files
     # CRITICAL FIX: LabelCloud and annotation tools often use 0-based indexing
