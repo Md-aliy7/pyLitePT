@@ -62,8 +62,6 @@ class Controller:
 
     # POINT CLOUD METHODS
     def next_pcd(self, save: bool = True) -> None:
-        if save:
-            self.save()
         if self.pcd_manager.pcds_left():
             previous_bboxes = self.bbox_controller.bboxes
             self.pcd_manager.get_next_pcd()
@@ -80,7 +78,6 @@ class Controller:
             self.view.button_next_pcd.setEnabled(False)
 
     def prev_pcd(self) -> None:
-        self.save()
         if self.pcd_manager.current_id > 0:
             self.pcd_manager.get_prev_pcd()
             self.reset()
@@ -88,7 +85,6 @@ class Controller:
             self.bbox_controller.set_active_bbox(0)
 
     def custom_pcd(self, custom: int) -> None:
-        self.save()
         self.pcd_manager.get_custom_pcd(custom)
         self.reset()
         self.bbox_controller.set_bboxes(self.pcd_manager.get_labels_from_file())
@@ -376,7 +372,7 @@ class Controller:
             self.drawing_mode.drawing_strategy.register_scrolling(a0.angleDelta().y())
         elif self.side_mode and self.bbox_controller.has_active_bbox():
             self.bbox_controller.get_active_bbox().change_side(  # type: ignore
-                self.selected_side, -a0.angleDelta().y() / 4000  # type: ignore
+                self.selected_side, -(a0.angleDelta().y() / 4000) * self.bbox_controller.scale_speed_factor  # type: ignore
             )  # ToDo implement method
         else:
             self.pcd_manager.zoom_into(a0.angleDelta().y())

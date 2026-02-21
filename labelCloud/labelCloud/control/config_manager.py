@@ -4,9 +4,6 @@ import configparser
 from pathlib import Path
 from typing import List, Union
 
-import pkg_resources
-
-
 class ExtendedConfigParser(configparser.ConfigParser):
     """Extends the ConfigParser with the ability to read and parse lists.
 
@@ -32,9 +29,7 @@ class ExtendedConfigParser(configparser.ConfigParser):
 
 class ConfigManager(object):
     PATH_TO_CONFIG = Path.cwd().joinpath("config.ini")
-    PATH_TO_DEFAULT_CONFIG = Path(
-        pkg_resources.resource_filename("labelCloud.resources", "default_config.ini")
-    )
+    PATH_TO_DEFAULT_CONFIG = Path(__file__).resolve().parent.parent.joinpath("resources", "default_config.ini")
 
     def __init__(self) -> None:
         self.config = ExtendedConfigParser(comment_prefixes="/", allow_no_value=True)

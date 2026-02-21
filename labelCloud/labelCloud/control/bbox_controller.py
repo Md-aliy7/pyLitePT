@@ -43,7 +43,7 @@ def only_zrotation_decorator(func):
     """
 
     def wrapper(*args, **kwargs):
-        if not config.getboolean("USER_INTERFACE", "z_rotation_only"):
+        if not config.getboolean("USER_INTERFACE", "z_rotation_only") or kwargs.get("absolute", False):
             return func(*args, **kwargs)
         else:
             logging.warning(
@@ -61,6 +61,11 @@ class BoundingBoxController(object):
         self.pcd_manager: PointCloudManger
         self.bboxes: List[BBox] = []
         self.active_bbox_id = -1  # -1 means zero bboxes
+        self.scale_speed_factor: float = 1.0
+
+    def set_scale_speed_factor(self, factor: float) -> None:
+        self.scale_speed_factor = factor
+        logging.info(f"Set scroller speed factor to {factor:.2f}x")
 
     # GETTERS
     def has_active_bbox(self) -> bool:
@@ -179,26 +184,33 @@ class BoundingBoxController(object):
     @only_zrotation_decorator
     @has_active_bbox_decorator
     def rotate_around_x(
-        self, dangle: Optional[float] = None, clockwise: bool = False
+        self, dangle: Optional[float] = None, clockwise: bool = False, absolute: bool = False
     ) -> None:
         dangle = dangle or config.getfloat("LABEL", "std_rotation")
         if clockwise:
             dangle *= -1
-        self.get_active_bbox().set_x_rotation(  # type: ignore
-            self.get_active_bbox().get_x_rotation() + dangle  # type: ignore
-        )
-
+        if absolute:
+            self.get_active_bbox().set_x_rotation(dangle)  # type: ignore
+        else:
+            self.get_active_bbox().set_x_rotation(  # type: ignore
+                self.get_active_bbox().get_x_rotation() + dangle  # type: ignore
+            )
+        self.update_all()
     @only_zrotation_decorator
     @has_active_bbox_decorator
     def rotate_around_y(
-        self, dangle: Optional[float] = None, clockwise: bool = False
+        self, dangle: Optional[float] = None, clockwise: bool = False, absolute: bool = False
     ) -> None:
         dangle = dangle or config.getfloat("LABEL", "std_rotation")
         if clockwise:
             dangle *= -1
-        self.get_active_bbox().set_y_rotation(  # type: ignore
-            self.get_active_bbox().get_y_rotation() + dangle  # type: ignore
-        )
+        if absolute:
+            self.get_active_bbox().set_y_rotation(dangle)  # type: ignore
+        else:
+            self.get_active_bbox().set_y_rotation(  # type: ignore
+                self.get_active_bbox().get_y_rotation() + dangle  # type: ignore
+            )
+        self.update_all()
 
     @has_active_bbox_decorator
     def rotate_around_z(
@@ -352,6 +364,8 @@ class BoundingBoxController(object):
 
     def update_all(self) -> None:
         self.update_z_dial()
+        self.update_x_dial()
+        self.update_y_dial()
         self.update_curr_class()
         self.update_label_list()
         self.view.update_bbox_stats(self.get_active_bbox())
@@ -361,6 +375,18 @@ class BoundingBoxController(object):
         self.view.dial_bbox_z_rotation.blockSignals(True)  # To brake signal loop
         self.view.dial_bbox_z_rotation.setValue(int(self.get_active_bbox().get_z_rotation()))  # type: ignore
         self.view.dial_bbox_z_rotation.blockSignals(False)
+
+    @has_active_bbox_decorator
+    def update_x_dial(self) -> None:
+        self.view.dial_bbox_x_rotation.blockSignals(True)  # To brake signal loop
+        self.view.dial_bbox_x_rotation.setValue(int(self.get_active_bbox().get_x_rotation()))  # type: ignore
+        self.view.dial_bbox_x_rotation.blockSignals(False)
+
+    @has_active_bbox_decorator
+    def update_y_dial(self) -> None:
+        self.view.dial_bbox_y_rotation.blockSignals(True)  # To brake signal loop
+        self.view.dial_bbox_y_rotation.setValue(int(self.get_active_bbox().get_y_rotation()))  # type: ignore
+        self.view.dial_bbox_y_rotation.blockSignals(False)
 
     def update_curr_class(self) -> None:
         if self.has_active_bbox():
