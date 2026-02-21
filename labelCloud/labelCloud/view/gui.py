@@ -183,6 +183,23 @@ class GUI(QtWidgets.QMainWindow):
         self.button_bbox_decrease_dimension: QtWidgets.QPushButton
         self.button_bbox_increase_dimension: QtWidgets.QPushButton
 
+        # CREATE X AND Y DIALS
+        self.dial_bbox_x_rotation = QtWidgets.QDial(self.button_bbox_up.parentWidget())
+        self.dial_bbox_x_rotation.setMaximum(359)
+        self.dial_bbox_x_rotation.setWrapping(True)
+        self.dial_bbox_x_rotation.setNotchesVisible(True)
+        self.dial_bbox_x_rotation.setToolTip("Rotate bounding box around the X-axis. [B]/[N]")
+
+        self.dial_bbox_y_rotation = QtWidgets.QDial(self.button_bbox_up.parentWidget())
+        self.dial_bbox_y_rotation.setMaximum(359)
+        self.dial_bbox_y_rotation.setWrapping(True)
+        self.dial_bbox_y_rotation.setNotchesVisible(True)
+        self.dial_bbox_y_rotation.setToolTip("Rotate bounding box around the Y-axis. [C]/[V]")
+
+        grid_layout = self.button_bbox_up.parentWidget().layout()
+        grid_layout.addWidget(self.dial_bbox_x_rotation, 3, 0)
+        grid_layout.addWidget(self.dial_bbox_y_rotation, 3, 2)
+
         # 2d image viewer
         self.button_show_image: QtWidgets.QPushButton
         self.button_show_image.setVisible(
@@ -303,6 +320,12 @@ class GUI(QtWidgets.QMainWindow):
 
         self.dial_bbox_z_rotation.valueChanged.connect(
             lambda x: self.controller.bbox_controller.rotate_around_z(x, absolute=True)
+        )
+        self.dial_bbox_x_rotation.valueChanged.connect(
+            lambda x: self.controller.bbox_controller.rotate_around_x(x, absolute=True)
+        )
+        self.dial_bbox_y_rotation.valueChanged.connect(
+            lambda x: self.controller.bbox_controller.rotate_around_y(x, absolute=True)
         )
         self.button_bbox_decrease_dimension.clicked.connect(
             lambda: self.controller.bbox_controller.scale(decrease=True)
@@ -456,8 +479,7 @@ class GUI(QtWidgets.QMainWindow):
         return False
 
     def closeEvent(self, a0: QtGui.QCloseEvent) -> None:
-        logging.info("Closing window after saving ...")
-        self.controller.save()
+        logging.info("Closing labelCloud window...")
         self.timer.stop()
         a0.accept()
 
@@ -720,7 +742,7 @@ class GUI(QtWidgets.QMainWindow):
         # Create Slider
         self.speed_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.speed_slider.setMinimum(5)
-        self.speed_slider.setMaximum(150)
+        self.speed_slider.setMaximum(1200)
         self.speed_slider.setValue(100)
         self.speed_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
         self.speed_slider.setTickInterval(10)
@@ -735,6 +757,34 @@ class GUI(QtWidgets.QMainWindow):
 
         # Connect signals
         self.speed_slider.valueChanged.connect(self._on_speed_changed)
+
+        # Create Scroller GroupBox
+        self.scroller_speed_controls = QtWidgets.QGroupBox("Scroller Speed")
+        self.scroller_speed_controls.setFont(font)
+        self.scroller_speed_controls.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+        self.scroller_speed_controls.setMaximumWidth(350) 
+        
+        scroller_layout = QtWidgets.QVBoxLayout()
+        self.scroller_speed_controls.setLayout(scroller_layout)
+
+        # Create Scroller Slider
+        self.scroller_speed_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.scroller_speed_slider.setMinimum(5)
+        self.scroller_speed_slider.setMaximum(1200)
+        self.scroller_speed_slider.setValue(100)
+        self.scroller_speed_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.scroller_speed_slider.setTickInterval(10)
+
+        # Create Scroller Label
+        self.scroller_speed_label = QtWidgets.QLabel("1.00x")
+        self.scroller_speed_label.setAlignment(QtCore.Qt.AlignCenter)
+
+        # Add to scroller layout
+        scroller_layout.addWidget(self.scroller_speed_label)
+        scroller_layout.addWidget(self.scroller_speed_slider)
+        
+        # Connect signals
+        self.scroller_speed_slider.valueChanged.connect(self._on_scroller_speed_changed)
 
         # Find where to insert
         # bbox_controls is in verticalLayout which is in horizontalLayout
@@ -755,12 +805,19 @@ class GUI(QtWidgets.QMainWindow):
         
         if index != -1:
             vertical_layout.insertWidget(index + 1, self.speed_controls)
+            vertical_layout.insertWidget(index + 2, self.scroller_speed_controls)
         else:
             # Fallback
             vertical_layout.addWidget(self.speed_controls)
+            vertical_layout.addWidget(self.scroller_speed_controls)
 
     def _on_speed_changed(self, value):
         factor = value / 100.0
         self.speed_label.setText(f"{factor:.2f}x")
         self.controller.pcd_manager.set_speed_factor(factor)
+
+    def _on_scroller_speed_changed(self, value):
+        factor = value / 100.0
+        self.scroller_speed_label.setText(f"{factor:.2f}x")
+        self.controller.bbox_controller.set_scale_speed_factor(factor)
 

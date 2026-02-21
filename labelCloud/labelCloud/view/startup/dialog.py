@@ -37,7 +37,9 @@ class _UnifiedModeStub:
     
     @property
     def available_label_formats(self):
-        return ["vertices"]  # Default format for unified mode
+        # We need to include 'centroid_abs', 'centroid_rel', 'kitti', 'vertices'
+        # so old bounding boxes saved in those formats can still be loaded!
+        return ["centroid_abs", "centroid_rel", "kitti", "kitti_untransformed", "vertices"]
 
 
 class StartupDialog(QDialog):
